@@ -5,6 +5,8 @@ description = "FastAPI backend for the TTB Label Verification proof-of-concept."
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115.0,<0.116.0",
+    "google-genai>=2.9.0",
+    "pillow>=12.2.0",
     "python-dotenv>=1.0.0,<2.0.0",
     "rapidfuzz>=3.14.5",
     "uvicorn[standard]>=0.30.0,<0.31.0",
