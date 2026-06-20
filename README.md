@@ -103,4 +103,4 @@ After deploy, visit the Vercel URL. The frontend should show the backend `/healt
 
 ## Secrets
 
-Use `.env.example`, `backend/.env.example`, and `frontend/.env.example` as the lists of required variables. Put real values only in local `.env` files or host environment variable dashboards. Do not commit real secrets.
+Use `backend/.env.example`, and `frontend/.env.example` as the lists of required variables. Put real values only in local `.env` files or host environment variable dashboards.
