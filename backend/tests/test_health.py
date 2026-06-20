@@ -9,6 +9,7 @@ def anyio_backend() -> str:
     return "asyncio"
 
 
+# Verifies the health endpoint returns the deployed service identity.
 @pytest.mark.anyio
 async def test_health_returns_ok() -> None:
     async with AsyncClient(
@@ -23,6 +24,7 @@ async def test_health_returns_ok() -> None:
     }
 
 
+# Verifies the backend allows the configured local frontend origin.
 @pytest.mark.anyio
 async def test_health_allows_configured_frontend_origin() -> None:
     async with AsyncClient(

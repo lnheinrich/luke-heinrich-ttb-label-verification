@@ -3,10 +3,12 @@ import { useState } from "react";
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
 
 export default function App() {
+    // Health check state is user-triggered so page load does not wake the backend.
     const [health, setHealth] = useState(null);
     const [error, setError] = useState("");
     const [isChecking, setIsChecking] = useState(false);
 
+    // Call the backend health endpoint configured for local or deployed environments.
     function checkHealth() {
         setIsChecking(true);
         setError("");
