@@ -6,7 +6,7 @@ const FIELD_DEFINITIONS = [
     { key: "brand_name", label: "Brand Name" },
     { key: "class_type", label: "Class / Type" },
     { key: "abv", label: "Alcohol Content" },
-    { key: "net_contents", label: "Bottle Size" },
+    { key: "net_contents", label: "Bottle Size", hint: "include units" },
     { key: "producer", label: "Producer" },
     { key: "country_of_origin", label: "Country of Origin" },
     {
@@ -43,8 +43,27 @@ export default function App() {
     }
 
     function handleImageChange(event) {
-        setSelectedImage(event.target.files?.[0] || null);
+        const nextImage = event.target.files?.[0];
+        if (!nextImage) {
+            return;
+        }
+
+        setSelectedImage(nextImage);
         setError("");
+    }
+
+    function openImagePicker() {
+        if (imageInputRef.current) {
+            imageInputRef.current.value = "";
+            imageInputRef.current.click();
+        }
+    }
+
+    function removeSelectedImage() {
+        setSelectedImage(null);
+        if (imageInputRef.current) {
+            imageInputRef.current.value = "";
+        }
     }
 
     async function handleSubmit(event) {
@@ -106,7 +125,7 @@ export default function App() {
                             <button
                                 className="file-button"
                                 type="button"
-                                onClick={() => imageInputRef.current?.click()}
+                                onClick={openImagePicker}
                                 disabled={isVerifying}
                             >
                                 Choose File
@@ -114,6 +133,18 @@ export default function App() {
                             <span className="file-name">
                                 {selectedImage ? selectedImage.name : "No file selected"}
                             </span>
+                            {selectedImage ? (
+                                <button
+                                    aria-label="Remove selected image"
+                                    className="remove-file-button"
+                                    title="Remove image"
+                                    type="button"
+                                    onClick={removeSelectedImage}
+                                    disabled={isVerifying}
+                                >
+                                    x
+                                </button>
+                            ) : null}
                         </div>
                         <input
                             ref={imageInputRef}
@@ -134,7 +165,8 @@ export default function App() {
                             >
                                 <label htmlFor={field.key}>
                                     {field.label}
-                                    {field.optional ? <span>Optional if not on label</span> : null}
+                                    {field.hint ? <span className="inline-hint">({field.hint})</span> : null}
+                                    {field.optional ? <span className="label-note">Optional if not on label</span> : null}
                                 </label>
                                 {field.multiline ? (
                                     <textarea

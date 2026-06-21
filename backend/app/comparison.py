@@ -10,6 +10,7 @@ FUZZY_CONTAINS_THRESHOLD = 90
 ABV_TOLERANCE = 0.1
 
 COUNTRY_ALIASES = {
+    "america": "united states",
     "us": "united states",
     "usa": "united states",
     "u s": "united states",
@@ -78,8 +79,8 @@ def compare_fuzzy_contains(field: str, expected: str, found: str | None) -> Fiel
     if found is None:
         return build_result(field, "fuzzy_contains", expected, found, "FAIL")
 
-    expected_normalized = normalize_text(expected)
-    found_normalized = normalize_text(found)
+    expected_normalized = normalize_fuzzy_contains_text(field, expected)
+    found_normalized = normalize_fuzzy_contains_text(field, found)
     status = (
         "PASS"
         if expected_normalized in found_normalized
@@ -178,6 +179,20 @@ def normalize_text(value: str) -> str:
 def normalize_country(value: str) -> str:
     normalized = normalize_text(value)
     return COUNTRY_ALIASES.get(normalized, normalized)
+
+
+# Normalize fields that need extra synonym handling before containment matching.
+def normalize_fuzzy_contains_text(field: str, value: str) -> str:
+    normalized = normalize_text(value)
+    if field == "class_type":
+        return normalize_class_type(normalized)
+
+    return normalized
+
+
+# Treat common whiskey/whisky spelling variants as the same class token.
+def normalize_class_type(value: str) -> str:
+    return re.sub(r"\bwhisky\b", "whiskey", value)
 
 
 # Return the RapidFuzz ratio score for two normalized strings.

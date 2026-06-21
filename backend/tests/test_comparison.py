@@ -106,6 +106,16 @@ def test_class_type_passes_when_found_contains_expected_class() -> None:
     assert result_for_field(result, "class_type").status == "PASS"
 
 
+# Verifies class matching treats whisky and whiskey as spelling variants.
+def test_class_type_whisky_matches_whiskey_label_text() -> None:
+    result = verify_label(
+        make_application(class_type="whisky"),
+        make_extracted(class_type="Tennessee SOUR MASH WHISKEY"),
+    )
+
+    assert result_for_field(result, "class_type").status == "PASS"
+
+
 # Verifies producer matching allows extra producer/facility wording on the label.
 def test_producer_passes_when_found_contains_expected_producer_name() -> None:
     result = verify_label(
@@ -132,6 +142,16 @@ def test_country_synonym_usa_vs_united_states_passes() -> None:
     result = verify_label(
         make_application(country_of_origin="USA"),
         make_extracted(country_of_origin="United States"),
+    )
+
+    assert result_for_field(result, "country_of_origin").status == "PASS"
+
+
+# Verifies America is treated as a user-entered synonym for the United States.
+def test_country_synonym_america_vs_u_s_a_passes() -> None:
+    result = verify_label(
+        make_application(country_of_origin="America"),
+        make_extracted(country_of_origin="U.S.A."),
     )
 
     assert result_for_field(result, "country_of_origin").status == "PASS"

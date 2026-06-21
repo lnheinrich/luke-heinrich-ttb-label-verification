@@ -99,7 +99,14 @@ label {
     font-weight: 800;
 }
 
-label span {
+.inline-hint {
+    color: #66798b;
+    font-size: 0.9rem;
+    font-weight: 700;
+    margin-left: 6px;
+}
+
+.label-note {
     color: #495f72;
     display: block;
     font-size: 0.92rem;
@@ -134,7 +141,7 @@ textarea:disabled {
     align-items: center;
     display: flex;
     flex-wrap: wrap;
-    gap: 12px 16px;
+    gap: 12px;
 }
 
 .hidden-file-input {
@@ -156,7 +163,23 @@ textarea:disabled {
 .file-name {
     color: #32465a;
     font-weight: 700;
+    margin-right: -6px;
     overflow-wrap: anywhere;
+}
+
+.remove-file-button {
+    background: transparent;
+    border: 0;
+    color: #b42318;
+    cursor: pointer;
+    font-size: 1.2rem;
+    font-weight: 900;
+    line-height: 1;
+    padding: 4px;
+}
+
+.remove-file-button:hover:not(:disabled) {
+    color: #7a1b13;
 }
 
 .field-grid {
@@ -212,7 +235,8 @@ textarea:disabled {
 }
 
 .verify-button:disabled,
-.file-button:disabled {
+.file-button:disabled,
+.remove-file-button:disabled {
     cursor: wait;
     opacity: 0.7;
 }
