@@ -8,6 +8,7 @@ from pydantic import BaseModel, StringConstraints
 FieldStatus = Literal["PASS", "FAIL"]
 OverallVerdict = Literal["APPROVED", "NEEDS_REVIEW"]
 RequiredText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+OptionalText = Annotated[str, StringConstraints(strip_whitespace=True)]
 
 
 # User-entered application values used as the comparison source of truth.
@@ -18,7 +19,7 @@ class ApplicationData(BaseModel):
     net_contents: RequiredText
     producer: RequiredText
     country_of_origin: RequiredText
-    government_warning: RequiredText
+    government_warning: OptionalText
 
 
 # Vision-extracted label values, nullable because OCR may miss fields.

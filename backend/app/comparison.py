@@ -40,7 +40,7 @@ def verify_label(
         compare_fuzzy_contains("class_type", application.class_type, extracted.class_type),
         compare_abv(application.abv, extracted.abv),
         compare_net_contents(application.net_contents, extracted.net_contents),
-        compare_fuzzy_text("producer", application.producer, extracted.producer),
+        compare_fuzzy_contains("producer", application.producer, extracted.producer),
         compare_country(application.country_of_origin, extracted.country_of_origin),
         compare_government_warning(
             application.government_warning,
@@ -141,10 +141,12 @@ def compare_net_contents(expected: str, found: str | None) -> FieldResult:
 
 # Compare the government warning exactly after whitespace collapse only.
 def compare_government_warning(expected: str, found: str | None) -> FieldResult:
+    expected_collapsed = collapse_whitespace(expected)
     if found is None:
-        return build_result("government_warning", "exact", expected, found, "FAIL")
+        status = "PASS" if not expected_collapsed else "FAIL"
+        return build_result("government_warning", "exact", expected, found, status)
 
-    status = "PASS" if collapse_whitespace(expected) == collapse_whitespace(found) else "FAIL"  # case-sensitive
+    status = "PASS" if expected_collapsed == collapse_whitespace(found) else "FAIL"  # case-sensitive
 
     return build_result("government_warning", "exact", expected, found, status)
 

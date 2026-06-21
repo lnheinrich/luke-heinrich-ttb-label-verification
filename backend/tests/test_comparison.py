@@ -106,6 +106,16 @@ def test_class_type_passes_when_found_contains_expected_class() -> None:
     assert result_for_field(result, "class_type").status == "PASS"
 
 
+# Verifies producer matching allows extra producer/facility wording on the label.
+def test_producer_passes_when_found_contains_expected_producer_name() -> None:
+    result = verify_label(
+        make_application(producer="Jack Daniels"),
+        make_extracted(producer="JACK DANIEL DISTILLERY"),
+    )
+
+    assert result_for_field(result, "producer").status == "PASS"
+
+
 # Verifies clearly different fuzzy text values fail and require review.
 def test_fuzzy_text_field_mismatch_fails() -> None:
     result = verify_label(
@@ -215,6 +225,28 @@ def test_correct_all_caps_government_warning_passes() -> None:
     )
 
     assert result_for_field(result, "government_warning").status == "PASS"
+
+
+# Verifies blank expected warning passes only when no warning is found on the label.
+def test_blank_government_warning_passes_when_extracted_warning_missing() -> None:
+    result = verify_label(
+        make_application(government_warning=""),
+        make_extracted(government_warning=None),
+    )
+
+    field_result = result_for_field(result, "government_warning")
+    assert field_result.status == "PASS"
+    assert field_result.found is None
+
+
+# Verifies blank expected warning fails if the label has warning text.
+def test_blank_government_warning_fails_when_extracted_warning_exists() -> None:
+    result = verify_label(
+        make_application(government_warning=""),
+        make_extracted(government_warning=CANONICAL_WARNING),
+    )
+
+    assert result_for_field(result, "government_warning").status == "FAIL"
 
 
 # Verifies warning comparison permits whitespace-only differences.
