@@ -6,6 +6,7 @@ from app.models import ApplicationData, ExtractedLabel, FieldResult, Verificatio
 
 
 FUZZY_THRESHOLD = 90
+FUZZY_CONTAINS_THRESHOLD = 90
 ABV_TOLERANCE = 0.1
 
 COUNTRY_ALIASES = {
@@ -35,8 +36,8 @@ def verify_label(
     latency_ms: int = 0,
 ) -> VerificationResult:
     results = [
-        compare_fuzzy_text("brand_name", application.brand_name, extracted.brand_name),
-        compare_fuzzy_text("class_type", application.class_type, extracted.class_type),
+        compare_fuzzy_contains("brand_name", application.brand_name, extracted.brand_name),
+        compare_fuzzy_contains("class_type", application.class_type, extracted.class_type),
         compare_abv(application.abv, extracted.abv),
         compare_net_contents(application.net_contents, extracted.net_contents),
         compare_fuzzy_text("producer", application.producer, extracted.producer),
@@ -70,6 +71,24 @@ def compare_fuzzy_text(field: str, expected: str, found: str | None) -> FieldRes
     status = "PASS" if score >= FUZZY_THRESHOLD else "FAIL"
 
     return build_result(field, "fuzzy", expected, found, status)
+
+
+# Compare text fields where the extracted value may include extra label text.
+def compare_fuzzy_contains(field: str, expected: str, found: str | None) -> FieldResult:
+    if found is None:
+        return build_result(field, "fuzzy_contains", expected, found, "FAIL")
+
+    expected_normalized = normalize_text(expected)
+    found_normalized = normalize_text(found)
+    status = (
+        "PASS"
+        if expected_normalized in found_normalized
+        or fuzzy_ratio(expected_normalized, found_normalized) >= FUZZY_THRESHOLD
+        or fuzzy_partial_ratio(expected_normalized, found_normalized) >= FUZZY_CONTAINS_THRESHOLD
+        else "FAIL"
+    )  # expected may be a shorter application value than the full label phrase
+
+    return build_result(field, "fuzzy_contains", expected, found, status)
 
 
 # Compare country values after mapping common aliases to canonical names.
@@ -162,6 +181,11 @@ def normalize_country(value: str) -> str:
 # Return the RapidFuzz ratio score for two normalized strings.
 def fuzzy_ratio(expected: str, found: str) -> float:
     return float(fuzz.ratio(expected, found))
+
+
+# Return the RapidFuzz partial ratio score for containment-like matches.
+def fuzzy_partial_ratio(expected: str, found: str) -> float:
+    return float(fuzz.partial_ratio(expected, found))
 
 
 # Extract the first numeric alcohol percentage from a label string.

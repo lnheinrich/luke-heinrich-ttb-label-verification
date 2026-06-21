@@ -48,6 +48,14 @@ class VisionServiceError(Exception):
     """Raised when image preprocessing or model extraction fails."""
 
 
+class VisionInputError(VisionServiceError):
+    """Raised when image bytes cannot be processed."""
+
+
+class VisionProviderError(VisionServiceError):
+    """Raised when the model provider or structured response fails."""
+
+
 class VisionService:
     # Extract label fields from an image using an injectable Google Gen AI client.
     def __init__(
@@ -67,7 +75,7 @@ class VisionService:
         except VisionServiceError:
             raise
         except Exception as exc:
-            raise VisionServiceError("Image preprocessing failed") from exc
+            raise VisionInputError("Image preprocessing failed") from exc
 
         try:
             response = self.client.models.generate_content(
@@ -86,16 +94,16 @@ class VisionService:
         except VisionServiceError:
             raise
         except (ValidationError, ValueError, TypeError) as exc:
-            raise VisionServiceError("Vision response did not match ExtractedLabel") from exc
+            raise VisionProviderError("Vision response did not match ExtractedLabel") from exc
         except Exception as exc:
-            raise VisionServiceError("Vision model request failed") from exc
+            raise VisionProviderError("Vision model request failed") from exc
 
 
 # Build the Google client from the project-specific API key variable.
 def build_google_client() -> genai.Client:
     api_key = os.getenv("GOOGLEAI_API_KEY")
     if not api_key:
-        raise VisionServiceError("GOOGLEAI_API_KEY is not configured")
+        raise VisionProviderError("GOOGLEAI_API_KEY is not configured")
 
     return genai.Client(api_key=api_key)
 
@@ -127,7 +135,7 @@ def preprocess_image(image_bytes: bytes) -> bytes:
             image.save(output, format="JPEG", quality=JPEG_QUALITY, optimize=True)
             return output.getvalue()
     except UnidentifiedImageError as exc:
-        raise VisionServiceError("Invalid or unsupported image bytes") from exc
+        raise VisionInputError("Invalid or unsupported image bytes") from exc
 
 
 # Normalize image modes before JPEG encoding.
@@ -146,7 +154,7 @@ def extract_parsed_label(response: Any) -> ExtractedLabel:
     if parsed is not None:
         return validate_extracted_label(parsed)
 
-    raise VisionServiceError("Vision response did not include parsed output")
+    raise VisionProviderError("Vision response did not include parsed output")
 
 
 # Validate fake-client dictionaries and SDK parsed model instances the same way.

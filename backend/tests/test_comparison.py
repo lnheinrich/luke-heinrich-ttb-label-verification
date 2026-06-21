@@ -86,6 +86,26 @@ def test_fuzzy_text_fields_pass_with_punctuation_and_spacing_differences() -> No
     assert result_for_field(result, "producer").status == "PASS"
 
 
+# Verifies brand matching allows extra descriptive label text around the brand.
+def test_brand_name_passes_when_found_contains_expected_core_brand() -> None:
+    result = verify_label(
+        make_application(brand_name="Jack Daniels"),
+        make_extracted(brand_name="Jack Daniel's Old No. 7 Brand"),
+    )
+
+    assert result_for_field(result, "brand_name").status == "PASS"
+
+
+# Verifies class matching allows longer extracted class phrases.
+def test_class_type_passes_when_found_contains_expected_class() -> None:
+    result = verify_label(
+        make_application(class_type="Whiskey"),
+        make_extracted(class_type="Tennessee SOUR MASH WHISKEY"),
+    )
+
+    assert result_for_field(result, "class_type").status == "PASS"
+
+
 # Verifies clearly different fuzzy text values fail and require review.
 def test_fuzzy_text_field_mismatch_fails() -> None:
     result = verify_label(

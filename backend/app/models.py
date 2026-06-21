@@ -1,21 +1,24 @@
 from typing import Literal
 
-from pydantic import BaseModel
+from typing_extensions import Annotated
+
+from pydantic import BaseModel, StringConstraints
 
 
 FieldStatus = Literal["PASS", "FAIL"]
 OverallVerdict = Literal["APPROVED", "NEEDS_REVIEW"]
+RequiredText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 
 # User-entered application values used as the comparison source of truth.
 class ApplicationData(BaseModel):
-    brand_name: str
-    class_type: str
-    abv: str
-    net_contents: str
-    producer: str
-    country_of_origin: str
-    government_warning: str
+    brand_name: RequiredText
+    class_type: RequiredText
+    abv: RequiredText
+    net_contents: RequiredText
+    producer: RequiredText
+    country_of_origin: RequiredText
+    government_warning: RequiredText
 
 
 # Vision-extracted label values, nullable because OCR may miss fields.
