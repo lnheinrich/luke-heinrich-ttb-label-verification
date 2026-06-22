@@ -7,6 +7,7 @@ from pydantic import BaseModel, StringConstraints
 
 FieldStatus = Literal["PASS", "FAIL"]
 OverallVerdict = Literal["APPROVED", "NEEDS_REVIEW"]
+BatchItemStatus = Literal["COMPLETED", "FAILED"]
 RequiredText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 OptionalText = Annotated[str, StringConstraints(strip_whitespace=True)]
 
@@ -48,4 +49,28 @@ class FieldResult(BaseModel):
 class VerificationResult(BaseModel):
     results: list[FieldResult]
     overall_verdict: OverallVerdict
+    latency_ms: int
+
+
+# One batch item result, preserving item order and isolating item-level failures.
+class BatchItemResult(BaseModel):
+    index: int
+    filename: str
+    status: BatchItemStatus
+    verification: VerificationResult | None = None
+    error: str | None = None
+
+
+# Aggregate counts for a completed batch request.
+class BatchSummary(BaseModel):
+    passed: int
+    needs_review: int
+    failed: int
+    total: int
+
+
+# Full batch response with item drill-down and aggregate timing.
+class BatchResult(BaseModel):
+    items: list[BatchItemResult]
+    summary: BatchSummary
     latency_ms: int

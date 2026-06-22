@@ -1,12 +1,14 @@
+import asyncio
 import json
 import logging
+import time
 from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
 from fastapi.exceptions import RequestValidationError
 
-from app.main import validation_exception_handler, verify
+from app.main import validation_exception_handler, verify, verify_batch
 from app.models import ExtractedLabel
 from app.vision import VisionInputError, VisionProviderError
 
@@ -37,15 +39,41 @@ class FakeVisionService:
 
         return self.extracted
 
+    async def extract_label_async(self, image_bytes: bytes, mime_type: str) -> ExtractedLabel:
+        return self.extract_label(image_bytes, mime_type)
+
+
+class ContentAwareVisionService:
+    def __init__(self, delay_seconds: float = 0) -> None:
+        self.delay_seconds = delay_seconds
+        self.calls = []
+
+    def extract_label(self, image_bytes: bytes, mime_type: str) -> ExtractedLabel:
+        self.calls.append({"image_bytes": image_bytes, "mime_type": mime_type})
+        if image_bytes == b"provider-error":
+            raise VisionProviderError("timeout")
+        if image_bytes == b"needs-review":
+            return make_extracted(producer="Other Producer")
+
+        return make_extracted()
+
+    async def extract_label_async(self, image_bytes: bytes, mime_type: str) -> ExtractedLabel:
+        if self.delay_seconds:
+            await asyncio.sleep(self.delay_seconds)
+
+        return self.extract_label(image_bytes, mime_type)
+
 
 class FakeUploadFile:
     def __init__(
         self,
         image_bytes: bytes = b"fake-image-bytes",
         content_type: str = "image/jpeg",
+        filename: str = "label.jpg",
     ) -> None:
         self.image_bytes = image_bytes
         self.content_type = content_type
+        self.filename = filename
 
     async def read(self) -> bytes:
         return self.image_bytes
@@ -92,8 +120,13 @@ def make_extracted(**overrides: str | None) -> ExtractedLabel:
 def make_upload(
     image_bytes: bytes = b"fake-image-bytes",
     content_type: str = "image/jpeg",
+    filename: str = "label.jpg",
 ):
-    return FakeUploadFile(image_bytes=image_bytes, content_type=content_type)
+    return FakeUploadFile(
+        image_bytes=image_bytes,
+        content_type=content_type,
+        filename=filename,
+    )
 
 
 # Call the endpoint with valid defaults and overridable inputs.
@@ -115,6 +148,28 @@ async def call_verify(
             else json.dumps(application_data)
         ),
         vision_service=fake_service or FakeVisionService(),
+    )
+
+
+# Call the batch endpoint with valid defaults and overridable inputs.
+async def call_verify_batch(
+    *,
+    fake_service=None,
+    application_items=None,
+    images=None,
+):
+    if application_items is None:
+        application_items = [make_application_data(), make_application_data()]
+    if images is None:
+        images = [
+            make_upload(image_bytes=b"approved", filename="first.jpg"),
+            make_upload(image_bytes=b"needs-review", filename="second.jpg"),
+        ]
+
+    return await verify_batch(
+        images=images,
+        application_data=json.dumps(application_items),
+        vision_service=fake_service or ContentAwareVisionService(),
     )
 
 
@@ -325,3 +380,142 @@ async def test_verify_logs_latency_without_sensitive_label_text(caplog) -> None:
     assert "overall_verdict=APPROVED" in log_text
     assert "Mountain Creek" not in log_text
     assert "GOVERNMENT WARNING" not in log_text
+
+
+# Verifies batch verification returns ordered completed items and summary counts.
+@pytest.mark.anyio
+async def test_verify_batch_returns_ordered_items_and_summary() -> None:
+    fake_service = ContentAwareVisionService()
+
+    result = await call_verify_batch(fake_service=fake_service)
+
+    assert result.summary.passed == 1
+    assert result.summary.needs_review == 1
+    assert result.summary.failed == 0
+    assert result.summary.total == 2
+    assert result.items[0].index == 0
+    assert result.items[0].filename == "first.jpg"
+    assert result.items[0].status == "COMPLETED"
+    assert result.items[0].verification.overall_verdict == "APPROVED"
+    assert result.items[1].index == 1
+    assert result.items[1].filename == "second.jpg"
+    assert result.items[1].status == "COMPLETED"
+    assert result.items[1].verification.overall_verdict == "NEEDS_REVIEW"
+
+
+# Verifies one provider failure does not fail the whole batch.
+@pytest.mark.anyio
+async def test_verify_batch_isolates_provider_failure_per_item() -> None:
+    fake_service = ContentAwareVisionService()
+
+    result = await call_verify_batch(
+        fake_service=fake_service,
+        images=[
+            make_upload(image_bytes=b"approved", filename="good.jpg"),
+            make_upload(image_bytes=b"provider-error", filename="bad.jpg"),
+        ],
+    )
+
+    assert result.summary.passed == 1
+    assert result.summary.needs_review == 0
+    assert result.summary.failed == 1
+    assert result.summary.total == 2
+    assert result.items[0].status == "COMPLETED"
+    assert result.items[1].status == "FAILED"
+    assert result.items[1].error == "Label extraction is temporarily unavailable. Try again."
+
+
+# Verifies one bad file type does not fail the whole batch.
+@pytest.mark.anyio
+async def test_verify_batch_isolates_bad_file_type_per_item() -> None:
+    fake_service = ContentAwareVisionService()
+
+    result = await call_verify_batch(
+        fake_service=fake_service,
+        images=[
+            make_upload(image_bytes=b"approved", filename="good.jpg"),
+            make_upload(
+                image_bytes=b"plain text",
+                content_type="text/plain",
+                filename="bad.txt",
+            ),
+        ],
+    )
+
+    assert result.summary.passed == 1
+    assert result.summary.failed == 1
+    assert result.items[1].status == "FAILED"
+    assert result.items[1].error == "Unsupported image type. Use JPEG, PNG, or WebP."
+
+
+# Verifies invalid item application data is returned as an item failure.
+@pytest.mark.anyio
+async def test_verify_batch_isolates_invalid_item_application_data() -> None:
+    fake_service = ContentAwareVisionService()
+    invalid_application = make_application_data()
+    del invalid_application["brand_name"]
+
+    result = await call_verify_batch(
+        fake_service=fake_service,
+        application_items=[make_application_data(), invalid_application],
+    )
+
+    assert result.summary.passed == 1
+    assert result.summary.failed == 1
+    assert result.items[1].status == "FAILED"
+    assert result.items[1].error == "Application data must include all required fields."
+
+
+# Verifies mismatched image and data counts fail the whole batch request.
+@pytest.mark.anyio
+async def test_verify_batch_mismatched_counts_returns_422() -> None:
+    with pytest.raises(HTTPException) as exc_info:
+        await call_verify_batch(
+            application_items=[make_application_data()],
+            images=[
+                make_upload(image_bytes=b"approved", filename="first.jpg"),
+                make_upload(image_bytes=b"approved", filename="second.jpg"),
+            ],
+        )
+
+    assert exc_info.value.status_code == 422
+    assert exc_info.value.detail == (
+        "Batch request must include one application data object for each image."
+    )
+
+
+# Verifies oversized batch requests fail before item work starts.
+@pytest.mark.anyio
+async def test_verify_batch_too_many_labels_returns_413() -> None:
+    with pytest.raises(HTTPException) as exc_info:
+        await call_verify_batch(
+            application_items=[make_application_data() for _ in range(6)],
+            images=[
+                make_upload(image_bytes=f"image-{index}".encode(), filename=f"{index}.jpg")
+                for index in range(6)
+            ],
+        )
+
+    assert exc_info.value.status_code == 413
+    assert exc_info.value.detail == "Batch is too large. Maximum size is 5 labels."
+
+
+# Verifies batch extraction runs concurrently instead of serially.
+@pytest.mark.anyio
+async def test_verify_batch_processes_items_concurrently() -> None:
+    fake_service = ContentAwareVisionService(delay_seconds=0.2)
+    start_time = time.perf_counter()
+
+    result = await call_verify_batch(
+        fake_service=fake_service,
+        application_items=[make_application_data() for _ in range(3)],
+        images=[
+            make_upload(image_bytes=b"approved-1", filename="one.jpg"),
+            make_upload(image_bytes=b"approved-2", filename="two.jpg"),
+            make_upload(image_bytes=b"approved-3", filename="three.jpg"),
+        ],
+    )
+    elapsed_seconds = time.perf_counter() - start_time
+
+    assert result.summary.passed == 3
+    assert elapsed_seconds < 0.5

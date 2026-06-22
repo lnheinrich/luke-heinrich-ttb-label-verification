@@ -41,17 +41,9 @@ textarea:focus-visible {
     width: 100%;
 }
 
-.eyebrow {
-    color: #495f72;
-    font-size: 1rem;
-    font-weight: 800;
-    margin: 0 0 12px;
-    text-transform: uppercase;
-}
-
 h1 {
     color: #102033;
-    font-size: 3rem;
+    font-size: 2.65rem;
     line-height: 1.05;
     margin: 0 0 16px;
 }
@@ -61,6 +53,60 @@ h1 {
     font-size: 1.25rem;
     line-height: 1.5;
     margin: 0 0 28px;
+}
+
+.mode-control {
+    align-items: flex-start;
+    display: flex;
+    gap: 8px;
+    margin-bottom: 12px;
+    margin-top: 12px;
+}
+
+.mode-switch {
+    background: #e8edf3;
+    border: 2px solid #b8c4d0;
+    border-radius: 8px;
+    display: inline-grid;
+    grid-template-columns: repeat(2, max-content);
+    min-height: 52px;
+    overflow: hidden;
+    padding: 4px;
+    position: relative;
+    width: max-content;
+}
+
+.mode-highlight {
+    background: #174ea6;
+    border-radius: 6px;
+    bottom: 4px;
+    left: 4px;
+    position: absolute;
+    top: 4px;
+    transition: transform 180ms ease;
+    width: calc(50% - 4px);
+}
+
+.batch-selected .mode-highlight {
+    transform: translateX(100%);
+}
+
+.mode-button {
+    background: transparent;
+    border: 0;
+    border-radius: 6px;
+    color: #102033;
+    cursor: pointer;
+    font-weight: 900;
+    min-height: 40px;
+    padding: 8px 14px;
+    position: relative;
+    transition: color 180ms ease;
+    z-index: 1;
+}
+
+.active-mode {
+    color: #ffffff;
 }
 
 .verification-form,
@@ -197,6 +243,74 @@ textarea:disabled {
     grid-column: 1 / -1;
 }
 
+.batch-list {
+    display: grid;
+    gap: 22px;
+}
+
+.batch-card {
+    border: 2px solid #d8e0e8;
+    border-radius: 8px;
+    display: grid;
+    gap: 18px;
+    padding: 20px;
+}
+
+.batch-card-header {
+    align-items: center;
+    display: flex;
+    gap: 16px;
+    justify-content: space-between;
+}
+
+.batch-card-header h2,
+.section-title {
+    color: #102033;
+    font-size: 1.35rem;
+    line-height: 1.2;
+    margin: 0;
+}
+
+.batch-actions {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px;
+}
+
+.batch-actions span {
+    color: #495f72;
+    font-weight: 800;
+}
+
+.secondary-button {
+    background: #ffffff;
+    border: 2px solid #174ea6;
+    border-radius: 8px;
+    color: #174ea6;
+    cursor: pointer;
+    font-weight: 900;
+    min-height: 48px;
+    padding: 10px 18px;
+}
+
+.text-danger-button {
+    background: transparent;
+    border: 0;
+    color: #b42318;
+    cursor: pointer;
+    font-weight: 900;
+    padding: 8px;
+}
+
+.secondary-button:hover:not(:disabled) {
+    background: #eef5ff;
+}
+
+.text-danger-button:hover:not(:disabled) {
+    color: #7a1b13;
+}
+
 .message {
     border-radius: 8px;
     font-size: 1.05rem;
@@ -236,7 +350,9 @@ textarea:disabled {
 
 .verify-button:disabled,
 .file-button:disabled,
-.remove-file-button:disabled {
+.remove-file-button:disabled,
+.secondary-button:disabled,
+.text-danger-button:disabled {
     cursor: wait;
     opacity: 0.7;
 }
@@ -281,6 +397,151 @@ textarea:disabled {
 .result-list {
     display: grid;
     gap: 14px;
+}
+
+.summary-grid {
+    display: grid;
+    gap: 14px;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    margin: 20px 0 12px;
+}
+
+.summary-card {
+    border-radius: 8px;
+    padding: 16px;
+}
+
+.summary-card span {
+    display: block;
+    font-weight: 900;
+    margin-bottom: 8px;
+}
+
+.summary-card strong {
+    display: block;
+    font-size: 2rem;
+    line-height: 1;
+}
+
+.summary-passed {
+    background: #eaf7ef;
+    color: #145233;
+}
+
+.summary-review {
+    background: #fff3e8;
+    color: #7c2d12;
+}
+
+.summary-failed {
+    background: #fff1f0;
+    color: #7a1b13;
+}
+
+.summary-total {
+    background: #eef2f5;
+    color: #102033;
+}
+
+.batch-time {
+    color: #495f72;
+    font-weight: 800;
+    margin: 0 0 16px;
+}
+
+.batch-results-list {
+    display: grid;
+    gap: 16px;
+    margin-top: 18px;
+}
+
+.batch-result-item {
+    border: 2px solid #d8e0e8;
+    border-radius: 8px;
+    overflow: hidden;
+    transition: border-color 160ms ease;
+}
+
+.batch-result-item:not(.is-open):hover {
+    border-color: #7b8998;
+}
+
+.batch-result-summary {
+    align-items: center;
+    display: grid;
+    gap: 16px;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    min-height: 64px;
+    padding: 16px;
+}
+
+.batch-result-item:not(.is-open) .batch-result-summary {
+    cursor: pointer;
+}
+
+.batch-result-summary > span:first-child {
+    color: #102033;
+    font-weight: 900;
+    overflow-wrap: anywhere;
+}
+
+.batch-result-summary strong {
+    white-space: nowrap;
+}
+
+.collapse-control {
+    align-items: center;
+    background: transparent;
+    border: 0;
+    color: #6d7f90;
+    cursor: pointer;
+    display: inline-flex;
+    font-size: 0.92rem;
+    font-weight: 900;
+    gap: 8px;
+    padding: 6px 16px 6px 8px;
+}
+
+.batch-result-item:not(.is-open) .collapse-control {
+    display: none;
+}
+
+.collapse-arrow {
+    border-bottom: 3px solid currentColor;
+    border-right: 3px solid currentColor;
+    display: inline-block;
+    height: 9px;
+    margin-top: -4px;
+    transform: rotate(45deg);
+    transition: transform 160ms ease;
+    width: 9px;
+}
+
+.collapse-control:hover .collapse-arrow {
+    transform: rotate(225deg);
+}
+
+.batch-result-item > .message,
+.batch-result-item > .batch-time,
+.batch-result-item > .result-list {
+    margin-left: 16px;
+    margin-right: 16px;
+}
+
+.batch-result-item > .result-list {
+    margin-bottom: 16px;
+}
+
+.item-approved {
+    color: #145233;
+}
+
+.item-review {
+    color: #b45309;
+}
+
+.item-failed {
+    color: #b42318;
 }
 
 .result-row {
@@ -364,7 +625,7 @@ textarea:disabled {
     }
 
     h1 {
-        font-size: 2.35rem;
+        font-size: 2.15rem;
     }
 
     .intro {
@@ -377,7 +638,8 @@ textarea:disabled {
     }
 
     .field-grid,
-    .comparison-values {
+    .comparison-values,
+    .summary-grid {
         grid-template-columns: 1fr;
     }
 
@@ -388,5 +650,11 @@ textarea:disabled {
     .result-heading {
         align-items: flex-start;
         flex-direction: column;
+    }
+
+    .batch-card-header,
+    .batch-result-summary {
+        align-items: flex-start;
+        grid-template-columns: 1fr;
     }
 }
