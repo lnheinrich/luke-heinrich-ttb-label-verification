@@ -7,6 +7,7 @@ from app.models import ApplicationData, ExtractedLabel, FieldResult, Verificatio
 
 FUZZY_THRESHOLD = 90
 FUZZY_CONTAINS_THRESHOLD = 90
+MIN_FUZZY_CONTAINS_CHARS = 3
 ABV_TOLERANCE = 0.1
 
 COUNTRY_ALIASES = {
@@ -81,6 +82,10 @@ def compare_fuzzy_contains(field: str, expected: str, found: str | None) -> Fiel
 
     expected_normalized = normalize_fuzzy_contains_text(field, expected)
     found_normalized = normalize_fuzzy_contains_text(field, found)
+    if len(expected_normalized) < MIN_FUZZY_CONTAINS_CHARS:
+        status = "PASS" if expected_normalized == found_normalized else "FAIL"
+        return build_result(field, "fuzzy_contains", expected, found, status)
+
     status = (
         "PASS"
         if expected_normalized in found_normalized

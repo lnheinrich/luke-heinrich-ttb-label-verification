@@ -137,6 +137,26 @@ def test_fuzzy_text_field_mismatch_fails() -> None:
     assert result.overall_verdict == "NEEDS_REVIEW"
 
 
+# Verifies tiny application values do not pass by matching one character in a longer label.
+def test_short_brand_value_does_not_pass_containment_match() -> None:
+    result = verify_label(
+        make_application(brand_name="s"),
+        make_extracted(brand_name="Coors LIGHT"),
+    )
+
+    assert result_for_field(result, "brand_name").status == "FAIL"
+
+
+# Verifies short values can still pass when the extracted value is exactly the same.
+def test_short_brand_value_passes_exact_normalized_match() -> None:
+    result = verify_label(
+        make_application(brand_name="s"),
+        make_extracted(brand_name="S"),
+    )
+
+    assert result_for_field(result, "brand_name").status == "PASS"
+
+
 # Verifies country aliases normalize before comparison.
 def test_country_synonym_usa_vs_united_states_passes() -> None:
     result = verify_label(

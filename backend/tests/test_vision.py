@@ -102,6 +102,13 @@ def test_extract_label_request_uses_image_prompt_and_structured_output() -> None
     assert config.response_schema is ExtractedLabel
     assert config.temperature == 0
     assert config.http_options.timeout == 3000
+    assert service.last_metrics is not None
+    assert service.last_metrics.original_bytes > 0
+    assert service.last_metrics.optimized_bytes > 0
+    assert service.last_metrics.optimized_width == 400
+    assert service.last_metrics.optimized_height == 300
+    assert service.last_metrics.preprocess_ms >= 0
+    assert service.last_metrics.vision_ms >= 0
 
 
 # Verifies successful parsed output is returned as an ExtractedLabel.

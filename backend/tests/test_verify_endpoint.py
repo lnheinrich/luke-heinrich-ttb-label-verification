@@ -378,8 +378,30 @@ async def test_verify_logs_latency_without_sensitive_label_text(caplog) -> None:
     assert result.overall_verdict == "APPROVED"
     assert "verify_request latency_ms=" in log_text
     assert "overall_verdict=APPROVED" in log_text
+    assert "original_image_bytes=" in log_text
+    assert "read_image_ms=" in log_text
+    assert "preprocess_ms=" in log_text
+    assert "vision_ms=" in log_text
+    assert "compare_ms=" in log_text
     assert "Mountain Creek" not in log_text
     assert "GOVERNMENT WARNING" not in log_text
+
+
+# Verifies partial extraction degrades to review instead of failing the request.
+@pytest.mark.anyio
+async def test_verify_partial_extraction_returns_needs_review() -> None:
+    fake_service = FakeVisionService(
+        extracted=ExtractedLabel(
+            brand_name="Mountain Creek",
+            raw_text="Mountain Creek",
+            extraction_confidence=0.35,
+        )
+    )
+
+    result = await call_verify(fake_service=fake_service)
+
+    assert result.overall_verdict == "NEEDS_REVIEW"
+    assert len(result.results) == 7
 
 
 # Verifies batch verification returns ordered completed items and summary counts.
@@ -484,20 +506,19 @@ async def test_verify_batch_mismatched_counts_returns_422() -> None:
     )
 
 
-# Verifies oversized batch requests fail before item work starts.
+# Verifies larger batches are accepted while concurrency remains bounded.
 @pytest.mark.anyio
-async def test_verify_batch_too_many_labels_returns_413() -> None:
-    with pytest.raises(HTTPException) as exc_info:
-        await call_verify_batch(
-            application_items=[make_application_data() for _ in range(6)],
-            images=[
-                make_upload(image_bytes=f"image-{index}".encode(), filename=f"{index}.jpg")
-                for index in range(6)
-            ],
-        )
+async def test_verify_batch_accepts_more_than_five_labels() -> None:
+    result = await call_verify_batch(
+        application_items=[make_application_data() for _ in range(6)],
+        images=[
+            make_upload(image_bytes=f"image-{index}".encode(), filename=f"{index}.jpg")
+            for index in range(6)
+        ],
+    )
 
-    assert exc_info.value.status_code == 413
-    assert exc_info.value.detail == "Batch is too large. Maximum size is 5 labels."
+    assert result.summary.total == 6
+    assert result.summary.passed == 6
 
 
 # Verifies batch extraction runs concurrently instead of serially.

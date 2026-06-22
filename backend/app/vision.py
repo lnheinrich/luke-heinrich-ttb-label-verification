@@ -1,4 +1,6 @@
 import os
+import time
+from dataclasses import dataclass
 from io import BytesIO
 from typing import Any
 
@@ -12,8 +14,8 @@ from app.models import ExtractedLabel
 
 DEFAULT_VISION_MODEL = "gemini-2.5-flash"
 DEFAULT_TIMEOUT_SECONDS = 10.0
-MAX_IMAGE_DIMENSION = 1280
-JPEG_QUALITY = 80
+MAX_IMAGE_DIMENSION = 1024
+JPEG_QUALITY = 75
 
 EXTRACTION_PROMPT = """
 You are extracting text from an alcohol beverage label for TTB label review.
@@ -44,6 +46,26 @@ Set extraction_confidence from 0.0 to 1.0, using lower values for partial or unc
 """.strip()
 
 
+@dataclass(frozen=True)
+class ImagePreprocessResult:
+    image_bytes: bytes
+    original_bytes: int
+    optimized_bytes: int
+    optimized_width: int
+    optimized_height: int
+    preprocess_ms: int
+
+
+@dataclass(frozen=True)
+class VisionRequestMetrics:
+    original_bytes: int
+    optimized_bytes: int
+    optimized_width: int
+    optimized_height: int
+    preprocess_ms: int
+    vision_ms: int
+
+
 class VisionServiceError(Exception):
     """Raised when image preprocessing or model extraction fails."""
 
@@ -67,16 +89,19 @@ class VisionService:
         self.client = client or build_google_client()
         self.model = model or os.getenv("GOOGLEAI_MODEL", DEFAULT_VISION_MODEL)
         self.timeout_seconds = timeout_seconds
+        self.last_metrics: VisionRequestMetrics | None = None
 
     # Preprocess an image, send it to the vision model, and validate the result.
     def extract_label(self, image_bytes: bytes, mime_type: str) -> ExtractedLabel:
+        self.last_metrics = None
         try:
-            image_part = image_bytes_to_inline_part(image_bytes)
+            image_part, preprocess_result = image_bytes_to_inline_part_with_metrics(image_bytes)
         except VisionServiceError:
             raise
         except Exception as exc:
             raise VisionInputError("Image preprocessing failed") from exc
 
+        vision_start = time.perf_counter()
         try:
             response = self.client.models.generate_content(
                 model=self.model,
@@ -90,7 +115,16 @@ class VisionService:
                     ),
                 ),
             )
-            return extract_parsed_label(response)
+            label = extract_parsed_label(response)
+            self.last_metrics = VisionRequestMetrics(
+                original_bytes=preprocess_result.original_bytes,
+                optimized_bytes=preprocess_result.optimized_bytes,
+                optimized_width=preprocess_result.optimized_width,
+                optimized_height=preprocess_result.optimized_height,
+                preprocess_ms=preprocess_result.preprocess_ms,
+                vision_ms=elapsed_ms(vision_start),
+            )
+            return label
         except VisionServiceError:
             raise
         except (ValidationError, ValueError, TypeError) as exc:
@@ -110,18 +144,36 @@ def build_google_client() -> genai.Client:
 
 # Convert arbitrary supported image bytes into an optimized inline image part.
 def image_bytes_to_inline_part(image_bytes: bytes) -> types.Part:
-    jpeg_bytes = preprocess_image(image_bytes)
+    image_part, _ = image_bytes_to_inline_part_with_metrics(image_bytes)
 
-    return types.Part(
-        inline_data=types.Blob(
-            data=jpeg_bytes,
-            mime_type="image/jpeg",
-        )
+    return image_part
+
+
+# Convert image bytes into an inline part while preserving preprocessing metrics.
+def image_bytes_to_inline_part_with_metrics(
+    image_bytes: bytes,
+) -> tuple[types.Part, ImagePreprocessResult]:
+    preprocess_result = preprocess_image_with_metrics(image_bytes)
+
+    return (
+        types.Part(
+            inline_data=types.Blob(
+                data=preprocess_result.image_bytes,
+                mime_type="image/jpeg",
+            )
+        ),
+        preprocess_result,
     )
 
 
 # Downscale and re-encode an image for lower-latency vision requests.
 def preprocess_image(image_bytes: bytes) -> bytes:
+    return preprocess_image_with_metrics(image_bytes).image_bytes
+
+
+# Downscale and re-encode an image with metadata for performance logging.
+def preprocess_image_with_metrics(image_bytes: bytes) -> ImagePreprocessResult:
+    preprocess_start = time.perf_counter()
     try:
         with Image.open(BytesIO(image_bytes)) as image:
             image = ImageOps.exif_transpose(image)
@@ -133,7 +185,15 @@ def preprocess_image(image_bytes: bytes) -> bytes:
 
             output = BytesIO()
             image.save(output, format="JPEG", quality=JPEG_QUALITY, optimize=True)
-            return output.getvalue()
+            optimized_bytes = output.getvalue()
+            return ImagePreprocessResult(
+                image_bytes=optimized_bytes,
+                original_bytes=len(image_bytes),
+                optimized_bytes=len(optimized_bytes),
+                optimized_width=image.width,
+                optimized_height=image.height,
+                preprocess_ms=elapsed_ms(preprocess_start),
+            )
     except UnidentifiedImageError as exc:
         raise VisionInputError("Invalid or unsupported image bytes") from exc
 
@@ -163,3 +223,8 @@ def validate_extracted_label(value: Any) -> ExtractedLabel:
         return value
 
     return ExtractedLabel.model_validate(value)
+
+
+# Convert elapsed work time to integer milliseconds for coarse diagnostics.
+def elapsed_ms(start_time: float) -> int:
+    return int((time.perf_counter() - start_time) * 1000)

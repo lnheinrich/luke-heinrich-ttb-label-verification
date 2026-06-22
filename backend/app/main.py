@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import time
+from dataclasses import dataclass
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
@@ -28,7 +29,6 @@ load_dotenv()
 
 APP_NAME = "ttb-label-verification"
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
-MAX_BATCH_ITEMS = 5
 BATCH_CONCURRENCY = 3
 SUPPORTED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
 logger = logging.getLogger(__name__)
@@ -38,6 +38,20 @@ DEFAULT_CORS_ORIGINS = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
 ]
+
+
+@dataclass(frozen=True)
+class LabelVerificationMetrics:
+    read_image_ms: int
+    compare_ms: int
+    original_image_size: int
+    vision_metrics: object | None
+
+
+@dataclass(frozen=True)
+class LabelVerificationOutput:
+    result: VerificationResult
+    metrics: LabelVerificationMetrics
 
 app = FastAPI(title="TTB Label Verification")
 
@@ -93,16 +107,17 @@ async def verify(
 
     try:
         application = parse_application_data(application_data)
-        result = await verify_uploaded_label(
+        output = await verify_uploaded_label(
             image=image,
             application=application,
             vision_service=vision_service,
             extract_semaphore=None,
         )
+        result = output.result
         log_verify_request(
             latency_ms=result.latency_ms,
             content_type=content_type,
-            image_size=None,
+            metrics=output.metrics,
             status="success",
             overall_verdict=result.overall_verdict,
         )
@@ -112,7 +127,7 @@ async def verify(
         log_verify_request(
             latency_ms=elapsed_ms(start_time),
             content_type=content_type,
-            image_size=None,
+            metrics=None,
             status=f"error_{exc.status_code}",
             overall_verdict=None,
         )
@@ -121,7 +136,7 @@ async def verify(
         log_verify_request(
             latency_ms=elapsed_ms(start_time),
             content_type=content_type,
-            image_size=None,
+            metrics=None,
             status="error_422",
             overall_verdict=None,
         )
@@ -133,7 +148,7 @@ async def verify(
         log_verify_request(
             latency_ms=elapsed_ms(start_time),
             content_type=content_type,
-            image_size=None,
+            metrics=None,
             status="error_502",
             overall_verdict=None,
         )
@@ -187,10 +202,12 @@ async def verify_uploaded_label(
     application: ApplicationData,
     vision_service: VisionService,
     extract_semaphore: asyncio.Semaphore | None,
-) -> VerificationResult:
+) -> LabelVerificationOutput:
     start_time = time.perf_counter()
     content_type = image.content_type or ""
+    read_start = time.perf_counter()
     image_bytes = await read_image_bytes(image)
+    read_image_ms = elapsed_ms(read_start)
 
     extracted = await extract_label_async(
         vision_service=vision_service,
@@ -199,10 +216,22 @@ async def verify_uploaded_label(
         extract_semaphore=extract_semaphore,
     )
 
-    return verify_label(
+    compare_start = time.perf_counter()
+    result = verify_label(
         application,
         extracted,
         latency_ms=elapsed_ms(start_time),
+    )
+    compare_ms = elapsed_ms(compare_start)
+
+    return LabelVerificationOutput(
+        result=result,
+        metrics=LabelVerificationMetrics(
+            read_image_ms=read_image_ms,
+            compare_ms=compare_ms,
+            original_image_size=len(image_bytes),
+            vision_metrics=getattr(vision_service, "last_metrics", None),
+        ),
     )
 
 
@@ -245,7 +274,7 @@ async def verify_batch_item(
 
     try:
         application = parse_application_data_object(application_payload)
-        verification = await verify_uploaded_label(
+        output = await verify_uploaded_label(
             image=image,
             application=application,
             vision_service=vision_service,
@@ -255,7 +284,7 @@ async def verify_batch_item(
             index=index,
             filename=filename,
             status="COMPLETED",
-            verification=verification,
+            verification=output.result,
         )
     except HTTPException as exc:
         return build_failed_batch_item(index, filename, str(exc.detail))
@@ -364,12 +393,6 @@ def validate_batch_shape(images: list[UploadFile], parsed_items: list[object]) -
             status_code=422,
             detail="Batch request must include one application data object for each image.",
         )
-    if len(images) > MAX_BATCH_ITEMS:
-        raise HTTPException(
-            status_code=413,
-            detail=f"Batch is too large. Maximum size is {MAX_BATCH_ITEMS} labels.",
-        )
-
 
 # Build a failed item while preserving batch order and filename.
 def build_failed_batch_item(index: int, filename: str, error: str) -> BatchItemResult:
@@ -415,15 +438,37 @@ def log_verify_request(
     *,
     latency_ms: int,
     content_type: str,
-    image_size: int | None,
+    metrics: LabelVerificationMetrics | None,
     status: str,
     overall_verdict: str | None,
 ) -> None:
+    vision_metrics = metrics.vision_metrics if metrics else None
     logger.info(
-        "verify_request latency_ms=%s status=%s overall_verdict=%s content_type=%s image_size=%s",
+        (
+            "verify_request latency_ms=%s status=%s overall_verdict=%s "
+            "content_type=%s original_image_bytes=%s optimized_image_bytes=%s "
+            "optimized_dimensions=%s read_image_ms=%s preprocess_ms=%s "
+            "vision_ms=%s compare_ms=%s"
+        ),
         latency_ms,
         status,
         overall_verdict,
         content_type or "unknown",
-        image_size if image_size is not None else "unknown",
+        metrics.original_image_size if metrics else "unknown",
+        getattr(vision_metrics, "optimized_bytes", "unknown"),
+        format_optimized_dimensions(vision_metrics),
+        metrics.read_image_ms if metrics else "unknown",
+        getattr(vision_metrics, "preprocess_ms", "unknown"),
+        getattr(vision_metrics, "vision_ms", "unknown"),
+        metrics.compare_ms if metrics else "unknown",
     )
+
+
+# Format optimized dimensions without exposing image content or filenames.
+def format_optimized_dimensions(vision_metrics: object | None) -> str:
+    width = getattr(vision_metrics, "optimized_width", None)
+    height = getattr(vision_metrics, "optimized_height", None)
+    if width is None or height is None:
+        return "unknown"
+
+    return f"{width}x{height}"
