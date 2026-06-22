@@ -1,7 +1,6 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
-const MAX_BATCH_ITEMS = 5;
 
 const FIELD_DEFINITIONS = [
     { key: "brand_name", label: "Brand Name" },
@@ -35,11 +34,31 @@ export default function App() {
     const [singleResult, setSingleResult] = useState(null);
     const [singleError, setSingleError] = useState("");
     const [isSingleVerifying, setIsSingleVerifying] = useState(false);
-    const [batchItems, setBatchItems] = useState([createBatchItem()]);
+    const [batchItems, setBatchItems] = useState(() => [createBatchItem()]);
+    const [activeBatchItemId, setActiveBatchItemId] = useState(null);
     const [batchResult, setBatchResult] = useState(null);
     const [batchError, setBatchError] = useState("");
     const [isBatchVerifying, setIsBatchVerifying] = useState(false);
     const [showBatchProgress, setShowBatchProgress] = useState(false);
+    const [duplicateImageAlert, setDuplicateImageAlert] = useState(null);
+    const duplicateImageAlertTimerRef = useRef(null);
+    const [incompleteLabelsAlert, setIncompleteLabelsAlert] = useState(null);
+    const incompleteLabelsAlertTimerRef = useRef(null);
+    const alertOrderRef = useRef(0);
+    const [shouldFlashIncompleteLabels, setShouldFlashIncompleteLabels] = useState(false);
+    const incompleteLabelFlashTimerRef = useRef(null);
+
+    useEffect(() => {
+        if (activeBatchItemId && !batchItems.some((item) => item.id === activeBatchItemId)) {
+            setActiveBatchItemId(null);
+        }
+    }, [activeBatchItemId, batchItems]);
+
+    useEffect(() => () => {
+        window.clearTimeout(duplicateImageAlertTimerRef.current);
+        window.clearTimeout(incompleteLabelsAlertTimerRef.current);
+        window.clearTimeout(incompleteLabelFlashTimerRef.current);
+    }, []);
 
     async function handleSingleSubmit(event) {
         event.preventDefault();
@@ -81,9 +100,10 @@ export default function App() {
         event.preventDefault();
         setBatchError("");
 
-        const validationError = validateBatchInput(batchItems);
-        if (validationError) {
-            setBatchError(validationError);
+        const incompleteLabelNumbers = getIncompleteBatchLabelNumbers(batchItems);
+        if (incompleteLabelNumbers.length > 0) {
+            showIncompleteLabelsAlert(incompleteLabelNumbers);
+            flashIncompleteLabels();
             return;
         }
 
@@ -142,86 +162,244 @@ export default function App() {
     }
 
     function updateBatchImage(itemId, image) {
+        if (image) {
+            const duplicateIndex = batchItems.findIndex(
+                (item) => item.id !== itemId && isSameFile(item.image, image),
+            );
+            if (duplicateIndex !== -1) {
+                showDuplicateImageAlert([duplicateIndex + 1]);
+                return;
+            }
+        }
+
         setBatchItems((currentItems) =>
             currentItems.map((item) => (item.id === itemId ? { ...item, image } : item)),
         );
     }
 
-    function addBatchItem() {
-        setBatchItems((currentItems) =>
-            currentItems.length >= MAX_BATCH_ITEMS
-                ? currentItems
-                : [...currentItems, createBatchItem()],
-        );
+    function addBatchImages(fileList) {
+        const files = Array.from(fileList || []);
+        if (files.length === 0) {
+            return;
+        }
+
+        const nextItems = [...batchItems];
+        const existingImageLabels = new Map();
+        nextItems.forEach((item, index) => {
+            const signature = getFileSignature(item.image);
+            if (signature) {
+                existingImageLabels.set(signature, index + 1);
+            }
+        });
+        const selectedSignatures = new Set();
+        const duplicateLabels = new Set();
+        const uniqueFiles = files.filter((file) => {
+            const signature = getFileSignature(file);
+            const existingLabel = existingImageLabels.get(signature);
+            if (existingLabel) {
+                duplicateLabels.add(existingLabel);
+                return false;
+            }
+            if (selectedSignatures.has(signature)) {
+                return false;
+            }
+            selectedSignatures.add(signature);
+            return true;
+        });
+        let fileIndex = 0;
+
+        if (duplicateLabels.size > 0) {
+            showDuplicateImageAlert([...duplicateLabels]);
+        }
+
+        if (uniqueFiles.length === 0) {
+            return;
+        }
+
+        if (nextItems.length === 1 && isBatchItemEmpty(nextItems[0])) {
+            nextItems[0] = { ...nextItems[0], image: uniqueFiles[0] };
+            fileIndex = 1;
+        }
+
+        while (fileIndex < uniqueFiles.length) {
+            nextItems.push(createBatchItem(uniqueFiles[fileIndex]));
+            fileIndex += 1;
+        }
+
+        setBatchItems(nextItems);
     }
 
     function removeBatchItem(itemId) {
-        setBatchItems((currentItems) =>
-            currentItems.length === 1
-                ? currentItems
-                : currentItems.filter((item) => item.id !== itemId),
-        );
+        const itemIndex = batchItems.findIndex((item) => item.id === itemId);
+        if (itemIndex === -1) {
+            return;
+        }
+
+        if (batchItems.length === 1) {
+            const emptyItem = createBatchItem();
+            setBatchItems([emptyItem]);
+            setActiveBatchItemId(null);
+            return;
+        }
+
+        const nextItems = batchItems.filter((item) => item.id !== itemId);
+
+        setBatchItems(nextItems);
+        if (activeBatchItemId === itemId) {
+            setActiveBatchItemId(null);
+        }
     }
 
+    function showDuplicateImageAlert(labelNumbers) {
+        const sortedLabelNumbers = [...labelNumbers].sort((firstNumber, secondNumber) => firstNumber - secondNumber);
+        const displayedLabelNumbers = sortedLabelNumbers.slice(0, 5);
+        const message =
+            sortedLabelNumbers.length === 1
+                ? `Selected image already exists in Label ${sortedLabelNumbers[0]}`
+                : sortedLabelNumbers.length > 5
+                    ? `Selected images already exist in Labels ${displayedLabelNumbers.join(", ")}, and other Labels`
+                    : `Selected images already exist in Labels ${sortedLabelNumbers.join(", ")}`;
+
+        window.clearTimeout(duplicateImageAlertTimerRef.current);
+        setDuplicateImageAlert({
+            id: crypto.randomUUID(),
+            message,
+            order: getNextAlertOrder(),
+        });
+        duplicateImageAlertTimerRef.current = window.setTimeout(() => {
+            setDuplicateImageAlert(null);
+        }, 5400);
+    }
+
+    function showIncompleteLabelsAlert(labelNumbers) {
+        window.clearTimeout(incompleteLabelsAlertTimerRef.current);
+        setIncompleteLabelsAlert({
+            id: crypto.randomUUID(),
+            message: formatIncompleteLabelsMessage(labelNumbers),
+            order: getNextAlertOrder(),
+        });
+        incompleteLabelsAlertTimerRef.current = window.setTimeout(() => {
+            setIncompleteLabelsAlert(null);
+        }, 5400);
+    }
+
+    function flashIncompleteLabels() {
+        window.clearTimeout(incompleteLabelFlashTimerRef.current);
+        setShouldFlashIncompleteLabels(false);
+        window.requestAnimationFrame(() => {
+            setShouldFlashIncompleteLabels(true);
+        });
+        incompleteLabelFlashTimerRef.current = window.setTimeout(() => {
+            setShouldFlashIncompleteLabels(false);
+        }, 5400);
+    }
+
+    function getNextAlertOrder() {
+        alertOrderRef.current += 1;
+        return alertOrderRef.current;
+    }
+
+    const visibleAlerts = [
+        duplicateImageAlert
+            ? {
+                className: "duplicate-image-alert",
+                id: duplicateImageAlert.id,
+                message: duplicateImageAlert.message,
+                order: duplicateImageAlert.order,
+                role: "status",
+            }
+            : null,
+        incompleteLabelsAlert
+            ? {
+                className: "batch-incomplete-alert",
+                id: incompleteLabelsAlert.id,
+                message: incompleteLabelsAlert.message,
+                order: incompleteLabelsAlert.order,
+                role: "alert",
+            }
+            : null,
+    ]
+        .filter(Boolean)
+        .sort((firstAlert, secondAlert) => firstAlert.order - secondAlert.order);
+
     return (
-        <main className="page-shell">
-            <section className="verification-panel" aria-labelledby="page-title">
-                <h1 id="page-title">TTB Label Verification</h1>
-                <p className="intro">
-                    Upload label images and enter the application details.
-                </p>
-
-                <div className="mode-control">
-                    <div
-                        className={`mode-switch ${mode === "batch" ? "batch-selected" : ""}`}
-                        aria-label="Verification mode"
-                        title="Label upload mode"
-                    >
-                        <span className="mode-highlight" aria-hidden="true" />
-                        <button
-                            className={mode === "single" ? "mode-button active-mode" : "mode-button"}
-                            type="button"
-                            onClick={() => setMode("single")}
+        <>
+            {visibleAlerts.length > 0 ? (
+                <div className="alert-stack">
+                    {visibleAlerts.map((alert) => (
+                        <div
+                            className={alert.className}
+                            key={alert.id}
+                            role={alert.role}
                         >
-                            Single
-                        </button>
-                        <button
-                            className={mode === "batch" ? "mode-button active-mode" : "mode-button"}
-                            type="button"
-                            onClick={() => setMode("batch")}
-                        >
-                            Batch
-                        </button>
-                    </div>
+                            {alert.message}
+                        </div>
+                    ))}
                 </div>
+            ) : null}
 
-                {mode === "single" ? (
-                    <SingleLabelForm
-                        error={singleError}
-                        formValues={singleValues}
-                        image={singleImage}
-                        isVerifying={isSingleVerifying}
-                        onFieldChange={updateSingleField}
-                        onImageChange={setSingleImage}
-                        onSubmit={handleSingleSubmit}
-                        result={singleResult}
-                    />
-                ) : (
-                    <BatchForm
-                        batchItems={batchItems}
+            <main className="page-shell">
+                <section className="verification-panel" aria-labelledby="page-title">
+                    <h1 id="page-title">TTB Label Verification</h1>
+                    <p className="intro">
+                        Upload label images and enter the application details.
+                    </p>
+
+                    <div className="mode-control">
+                        <div
+                            className={`mode-switch ${mode === "batch" ? "batch-selected" : ""}`}
+                            aria-label="Verification mode"
+                            title="Label upload mode"
+                        >
+                            <span className="mode-highlight" aria-hidden="true" />
+                            <button
+                                className={mode === "single" ? "mode-button active-mode" : "mode-button"}
+                                type="button"
+                                onClick={() => setMode("single")}
+                            >
+                                Single
+                            </button>
+                            <button
+                                className={mode === "batch" ? "mode-button active-mode" : "mode-button"}
+                                type="button"
+                                onClick={() => setMode("batch")}
+                            >
+                                Batch
+                            </button>
+                        </div>
+                    </div>
+
+                    {mode === "single" ? (
+                        <SingleLabelForm
+                            error={singleError}
+                            formValues={singleValues}
+                            image={singleImage}
+                            isVerifying={isSingleVerifying}
+                            onFieldChange={updateSingleField}
+                            onImageChange={setSingleImage}
+                            onSubmit={handleSingleSubmit}
+                            result={singleResult}
+                        />
+                    ) : (
+                        <BatchForm
+                            batchItems={batchItems}
+                            activeItemId={activeBatchItemId}
                         error={batchError}
+                        flashIncompleteLabels={shouldFlashIncompleteLabels}
                         isVerifying={isBatchVerifying}
-                        onAddItem={addBatchItem}
-                        onFieldChange={updateBatchField}
-                        onImageChange={updateBatchImage}
-                        onRemoveItem={removeBatchItem}
-                        onSubmit={handleBatchSubmit}
-                        result={batchResult}
-                        showProgress={showBatchProgress}
-                    />
-                )}
-            </section>
-        </main>
+                            onActiveItemChange={setActiveBatchItemId}
+                            onAddImages={addBatchImages}
+                            onFieldChange={updateBatchField}
+                            onImageChange={updateBatchImage}
+                            onRemoveItem={removeBatchItem}
+                            onSubmit={handleBatchSubmit}
+                            result={batchResult}
+                            showProgress={showBatchProgress}
+                        />
+                    )}
+                </section>
+            </main>
+        </>
     );
 }
 
@@ -266,10 +444,13 @@ function SingleLabelForm({
 }
 
 function BatchForm({
+    activeItemId,
     batchItems,
     error,
+    flashIncompleteLabels,
     isVerifying,
-    onAddItem,
+    onActiveItemChange,
+    onAddImages,
     onFieldChange,
     onImageChange,
     onRemoveItem,
@@ -277,35 +458,22 @@ function BatchForm({
     result,
     showProgress,
 }) {
+    const hasIncompleteLabels = batchItems.some((item) => !isBatchItemComplete(item));
+
     return (
         <>
             <form className="verification-form" onSubmit={onSubmit}>
-                <div className="batch-list">
-                    {batchItems.map((item, index) => (
-                        <BatchItemCard
-                            canRemove={batchItems.length > 1}
-                            index={index}
-                            isDisabled={isVerifying}
-                            item={item}
-                            key={item.id}
-                            onFieldChange={onFieldChange}
-                            onImageChange={onImageChange}
-                            onRemoveItem={onRemoveItem}
-                        />
-                    ))}
-                </div>
-
-                <div className="batch-actions">
-                    <button
-                        className="secondary-button"
-                        type="button"
-                        onClick={onAddItem}
-                        disabled={isVerifying || batchItems.length >= MAX_BATCH_ITEMS}
-                    >
-                        Add Label
-                    </button>
-                    <span>{batchItems.length} of {MAX_BATCH_ITEMS} labels</span>
-                </div>
+                <BatchAccordionList
+                    activeItemId={activeItemId}
+                    flashIncompleteLabels={flashIncompleteLabels}
+                    isDisabled={isVerifying}
+                    items={batchItems}
+                    onAddImages={onAddImages}
+                    onFieldChange={onFieldChange}
+                    onImageChange={onImageChange}
+                    onRemoveItem={onRemoveItem}
+                    onToggleItem={onActiveItemChange}
+                />
 
                 <FormMessages
                     error={error}
@@ -317,7 +485,11 @@ function BatchForm({
                     }
                 />
 
-                <button className="verify-button" type="submit" disabled={isVerifying}>
+                <button
+                    className={hasIncompleteLabels ? "verify-button verify-button-incomplete" : "verify-button"}
+                    type="submit"
+                    disabled={isVerifying}
+                >
                     {isVerifying ? "Verifying Batch..." : "Verify Batch"}
                 </button>
             </form>
@@ -327,44 +499,286 @@ function BatchForm({
     );
 }
 
-function BatchItemCard({
-    canRemove,
-    index,
+function BatchAccordionList({
+    activeItemId,
+    flashIncompleteLabels,
     isDisabled,
-    item,
+    items,
+    onAddImages,
     onFieldChange,
     onImageChange,
     onRemoveItem,
+    onToggleItem,
 }) {
+    const addImagesInputRef = useRef(null);
+    const itemRefs = useRef({});
+    const hasIncompleteItems = items.some((item) => !isBatchItemComplete(item));
+
+    function handleAddImagesChange(event) {
+        onAddImages(event.target.files);
+        event.target.value = "";
+    }
+
+    function openAddImagesPicker() {
+        addImagesInputRef.current?.click();
+    }
+
+    function registerItemRef(itemId, element) {
+        if (element) {
+            itemRefs.current[itemId] = element;
+            return;
+        }
+
+        delete itemRefs.current[itemId];
+    }
+
+    function handleNextIncomplete(currentItemId) {
+        const nextIncompleteItemId = getNextIncompleteItemId(items, currentItemId);
+        if (!nextIncompleteItemId) {
+            onToggleItem(null);
+            window.requestAnimationFrame(scrollToPageBottom);
+            return;
+        }
+
+        onToggleItem(nextIncompleteItemId);
+        window.setTimeout(() => {
+            const nextElement = itemRefs.current[nextIncompleteItemId];
+            if (nextElement) {
+                scrollTileToViewportOffset(nextElement, 20);
+            }
+        }, 240);
+    }
+
     return (
-        <section className="batch-card" aria-labelledby={`batch-label-${item.id}`}>
-            <div className="batch-card-header">
-                <h2 id={`batch-label-${item.id}`}>Label {index + 1}</h2>
-                {canRemove ? (
+        <>
+            <div className="batch-toolbar">
+                <h2>Batch Labels</h2>
+                <div className="batch-actions">
                     <button
-                        className="text-danger-button"
+                        className="secondary-button"
                         type="button"
-                        onClick={() => onRemoveItem(item.id)}
+                        onClick={openAddImagesPicker}
                         disabled={isDisabled}
                     >
-                        Remove
+                        Add Images
                     </button>
-                ) : null}
+                    <span>{items.length} labels</span>
+                    <input
+                        ref={addImagesInputRef}
+                        className="hidden-file-input"
+                        type="file"
+                        accept="image/jpeg,image/png,image/webp"
+                        multiple
+                        onChange={handleAddImagesChange}
+                        disabled={isDisabled}
+                        tabIndex={-1}
+                    />
+                </div>
             </div>
-            <ImagePicker
-                image={item.image}
-                isDisabled={isDisabled}
-                label="Label Image"
-                onImageChange={(image) => onImageChange(item.id, image)}
-            />
-            <FieldGrid
-                formValues={item.values}
-                idPrefix={`batch-${item.id}`}
-                isDisabled={isDisabled}
-                onFieldChange={(fieldKey, value) => onFieldChange(item.id, fieldKey, value)}
-            />
-        </section>
+
+            <div className="batch-label-list">
+                {items.map((item, index) => (
+                    <BatchAccordionItem
+                        index={index}
+                        flashIncompleteLabels={flashIncompleteLabels}
+                        hasIncompleteItems={hasIncompleteItems}
+                        isDisabled={isDisabled}
+                        isExpanded={item.id === activeItemId}
+                        item={item}
+                        key={item.id}
+                        onNextIncomplete={handleNextIncomplete}
+                        onFieldChange={onFieldChange}
+                        onImageChange={onImageChange}
+                        onRemoveItem={onRemoveItem}
+                        registerItemRef={registerItemRef}
+                        onToggleItem={onToggleItem}
+                    />
+                ))}
+            </div>
+        </>
     );
+}
+
+function BatchAccordionItem({
+    index,
+    flashIncompleteLabels,
+    hasIncompleteItems,
+    isDisabled,
+    isExpanded,
+    item,
+    onNextIncomplete,
+    onFieldChange,
+    onImageChange,
+    onRemoveItem,
+    registerItemRef,
+    onToggleItem,
+}) {
+    const imageInputRef = useRef(null);
+    const isComplete = isBatchItemComplete(item);
+
+    function handleChangeImage(event) {
+        const nextImage = event.target.files?.[0];
+        if (nextImage) {
+            onImageChange(item.id, nextImage);
+        }
+        event.target.value = "";
+    }
+
+    function handleImageControlClick() {
+        if (item.image) {
+            onImageChange(item.id, null);
+            return;
+        }
+
+        imageInputRef.current?.click();
+    }
+
+    function handleHeaderClick() {
+        onToggleItem(isExpanded ? null : item.id);
+    }
+
+    return (
+        <article
+            className={getBatchAccordionItemClassName({
+                flashIncompleteLabels,
+                isComplete,
+                isExpanded,
+            })}
+            ref={(element) => registerItemRef(item.id, element)}
+        >
+            <div className="batch-accordion-header">
+                <button
+                    aria-expanded={isExpanded}
+                    className="batch-accordion-toggle"
+                    type="button"
+                    onClick={handleHeaderClick}
+                    disabled={isDisabled}
+                >
+                    <span className="accordion-title">
+                        Label {index + 1}
+                        <span className="accordion-arrow" aria-hidden="true" />
+                    </span>
+                    <span className={isComplete ? "editor-status editor-complete" : "editor-status editor-incomplete"}>
+                        {isComplete ? "Ready" : "Incomplete"}
+                    </span>
+                </button>
+                <button
+                    aria-label={`Remove Label ${index + 1}`}
+                    className="remove-label-icon-button"
+                    type="button"
+                    onClick={() => onRemoveItem(item.id)}
+                    disabled={isDisabled}
+                >
+                    <span className="remove-label-icon" aria-hidden="true" />
+                </button>
+            </div>
+
+            <div
+                aria-hidden={!isExpanded}
+                className={isExpanded ? "batch-accordion-panel expanded-accordion-panel" : "batch-accordion-panel"}
+                inert={isExpanded ? undefined : ""}
+            >
+                <div className="batch-accordion-panel-inner">
+                    <div className="batch-accordion-body">
+                        <div className="expanded-image-section">
+                            <button
+                                aria-label={item.image ? `Remove image for Label ${index + 1}` : `Add image for Label ${index + 1}`}
+                                className={item.image ? "expanded-image-control has-image-preview" : "expanded-image-control empty-image-preview"}
+                                type="button"
+                                onClick={handleImageControlClick}
+                                disabled={isDisabled}
+                            >
+                                {item.image ? (
+                                    <>
+                                        <ImagePreview image={item.image} />
+                                        <span className="preview-remove-overlay">Remove</span>
+                                    </>
+                                ) : (
+                                    <span className="preview-add-icon" aria-hidden="true" />
+                                )}
+                            </button>
+                            <div className="expanded-image-meta">
+                                <span className="upload-label">Label Image</span>
+                                <TileFileName fileName={item.image?.name || ""} />
+                            </div>
+                        </div>
+
+                        <FieldGrid
+                            formValues={item.values}
+                            idPrefix={`batch-${item.id}`}
+                            isDisabled={isDisabled}
+                            onFieldChange={(fieldKey, value) => onFieldChange(item.id, fieldKey, value)}
+                        />
+
+                        <div className="next-incomplete-actions">
+                            <button
+                                className={isComplete ? "next-incomplete-button next-incomplete-button-ready" : "next-incomplete-button"}
+                                type="button"
+                                onClick={() => onNextIncomplete(item.id)}
+                                disabled={isDisabled}
+                            >
+                                {hasIncompleteItems ? "Next Incomplete" : "Finish"}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <input
+                ref={imageInputRef}
+                className="hidden-file-input"
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                onChange={handleChangeImage}
+                disabled={isDisabled}
+                tabIndex={-1}
+            />
+        </article>
+    );
+}
+
+function TileFileName({ fileName }) {
+    const fileNameRef = useRef(null);
+    const [isTruncated, setIsTruncated] = useState(false);
+
+    useEffect(() => {
+        function updateTruncationState() {
+            const element = fileNameRef.current;
+            setIsTruncated(Boolean(element && element.scrollWidth > element.clientWidth));
+        }
+
+        updateTruncationState();
+        window.addEventListener("resize", updateTruncationState);
+
+        return () => {
+            window.removeEventListener("resize", updateTruncationState);
+        };
+    }, [fileName]);
+
+    return (
+        <span
+            className={fileName ? "tile-file-name" : "tile-file-name empty-file-name"}
+            ref={fileNameRef}
+            title={isTruncated ? fileName : undefined}
+        >
+            {fileName}
+        </span>
+    );
+}
+
+function ImagePreview({ image }) {
+    const [previewUrl, setPreviewUrl] = useState("");
+
+    useEffect(() => {
+        const nextPreviewUrl = URL.createObjectURL(image);
+        setPreviewUrl(nextPreviewUrl);
+
+        return () => {
+            URL.revokeObjectURL(nextPreviewUrl);
+        };
+    }, [image]);
+
+    return <img alt="" src={previewUrl} />;
 }
 
 function ImagePicker({ image, isDisabled, label, onImageChange }) {
@@ -504,6 +918,12 @@ function ResultsView({ result }) {
 }
 
 function BatchResultsView({ result }) {
+    const [openItemIndex, setOpenItemIndex] = useState(null);
+
+    function toggleResultItem(itemIndex) {
+        setOpenItemIndex((currentIndex) => (currentIndex === itemIndex ? null : itemIndex));
+    }
+
     return (
         <section className="results-panel" aria-labelledby="batch-results-title">
             <h2 id="batch-results-title" className="section-title">Batch Results</h2>
@@ -517,7 +937,12 @@ function BatchResultsView({ result }) {
 
             <div className="batch-results-list">
                 {result.items.map((item) => (
-                    <BatchResultItem item={item} key={item.index} />
+                    <BatchResultItem
+                        isOpen={item.index === openItemIndex}
+                        item={item}
+                        key={item.index}
+                        onToggle={toggleResultItem}
+                    />
                 ))}
             </div>
         </section>
@@ -533,22 +958,19 @@ function SummaryCard({ label, value, tone }) {
     );
 }
 
-function BatchResultItem({ item }) {
-    const [isOpen, setIsOpen] = useState(false);
+function BatchResultItem({ isOpen, item, onToggle }) {
     const verification = item.verification;
     const isApproved = verification?.overall_verdict === "APPROVED";
     const title = `Label ${item.index + 1}: ${item.filename}`;
 
     function handleHeaderClick() {
-        if (!isOpen) {
-            setIsOpen(true);
-        }
+        onToggle(item.index);
     }
 
     function handleHeaderKeyDown(event) {
-        if (!isOpen && (event.key === "Enter" || event.key === " ")) {
+        if (event.key === "Enter" || event.key === " ") {
             event.preventDefault();
-            setIsOpen(true);
+            onToggle(item.index);
         }
     }
 
@@ -558,34 +980,35 @@ function BatchResultItem({ item }) {
                 className="batch-result-summary"
                 onClick={handleHeaderClick}
                 onKeyDown={handleHeaderKeyDown}
-                role={isOpen ? undefined : "button"}
-                tabIndex={isOpen ? undefined : 0}
+                role="button"
+                tabIndex={0}
             >
-                <span>{title}</span>
-                <button
-                    className="collapse-control"
-                    type="button"
-                    onClick={() => setIsOpen(false)}
-                >
-                    Collapse
-                    <span className="collapse-arrow" aria-hidden="true" />
-                </button>
+                <span className="accordion-title">
+                    {title}
+                    <span className="accordion-arrow" aria-hidden="true" />
+                </span>
                 <strong className={item.status === "FAILED" ? "item-failed" : isApproved ? "item-approved" : "item-review"}>
                     {item.status === "FAILED" ? "Failed" : isApproved ? "Approved" : "Needs Review"}
                 </strong>
             </div>
-            {isOpen ? (
-                item.status === "FAILED" ? (
-                    <div className="message message-error">{item.error}</div>
-                ) : (
-                    <>
-                        <p className="batch-time">
-                            Completed in {formatSeconds(verification.latency_ms)} seconds
-                        </p>
-                        <ResultFields results={verification.results} />
-                    </>
-                )
-            ) : null}
+            <div
+                aria-hidden={!isOpen}
+                className={isOpen ? "batch-result-panel expanded-result-panel" : "batch-result-panel"}
+                inert={isOpen ? undefined : ""}
+            >
+                <div className="batch-result-panel-inner">
+                    {item.status === "FAILED" ? (
+                        <div className="message message-error">{item.error}</div>
+                    ) : (
+                        <>
+                            <p className="batch-time">
+                                Completed in {formatSeconds(verification.latency_ms)} seconds
+                            </p>
+                            <ResultFields results={verification.results} />
+                        </>
+                    )}
+                </div>
+            </div>
         </article>
     );
 }
@@ -625,12 +1048,99 @@ function FieldResultRow({ fieldResult }) {
     );
 }
 
-function createBatchItem() {
+function createBatchItem(image = null) {
     return {
         id: crypto.randomUUID(),
-        image: null,
+        image,
         values: { ...INITIAL_FORM_VALUES },
     };
+}
+
+function isBatchItemComplete(item) {
+    return Boolean(item.image) && requiredFieldsComplete(item.values);
+}
+
+function isBatchItemEmpty(item) {
+    return !item.image && FIELD_DEFINITIONS.every((field) => !item.values[field.key].trim());
+}
+
+function getBatchAccordionItemClassName({ flashIncompleteLabels, isComplete, isExpanded }) {
+    const classNames = ["batch-accordion-item"];
+    if (isExpanded) {
+        classNames.push("expanded-batch-item");
+    }
+    if (flashIncompleteLabels && !isExpanded && !isComplete) {
+        classNames.push("flash-incomplete-label");
+    }
+
+    return classNames.join(" ");
+}
+
+function getFileSignature(file) {
+    if (!file) {
+        return "";
+    }
+
+    return `${file.name}:${file.size}:${file.lastModified}`;
+}
+
+function isSameFile(firstFile, secondFile) {
+    return Boolean(firstFile && secondFile && getFileSignature(firstFile) === getFileSignature(secondFile));
+}
+
+function getIncompleteBatchLabelNumbers(items) {
+    return items.reduce((labelNumbers, item, index) => {
+        if (!isBatchItemComplete(item)) {
+            labelNumbers.push(index + 1);
+        }
+        return labelNumbers;
+    }, []);
+}
+
+function getNextIncompleteItemId(items, currentItemId) {
+    const currentIndex = items.findIndex((item) => item.id === currentItemId);
+    if (currentIndex === -1) {
+        return items.find((item) => !isBatchItemComplete(item))?.id || null;
+    }
+
+    const nextIncompleteItem = items
+        .slice(currentIndex + 1)
+        .find((item) => !isBatchItemComplete(item));
+    if (nextIncompleteItem) {
+        return nextIncompleteItem.id;
+    }
+
+    return items.find((item) => !isBatchItemComplete(item))?.id || null;
+}
+
+function scrollTileToViewportOffset(element, topOffset) {
+    element.style.scrollMarginTop = `${topOffset}px`;
+    element.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+    });
+}
+
+function scrollToPageBottom() {
+    window.scrollTo({
+        top: document.documentElement.scrollHeight,
+        behavior: "smooth",
+    });
+}
+
+function formatIncompleteLabelsMessage(labelNumbers) {
+    const sortedLabelNumbers = [...labelNumbers].sort((firstNumber, secondNumber) => firstNumber - secondNumber);
+    const displayedLabelNumbers = sortedLabelNumbers.slice(0, 5);
+
+    if (sortedLabelNumbers.length === 1) {
+        return `Label ${sortedLabelNumbers[0]} is incomplete`;
+    }
+
+    if (sortedLabelNumbers.length > 5) {
+        return `Labels ${displayedLabelNumbers.join(", ")}, and other Labels are incomplete`;
+    }
+
+    return `Labels ${sortedLabelNumbers.join(", ")} are incomplete`;
 }
 
 function validateLabelInput(image, values) {
@@ -638,25 +1148,17 @@ function validateLabelInput(image, values) {
         return "Choose a label image before verifying.";
     }
 
-    const missingRequiredField = FIELD_DEFINITIONS.some(
-        (field) => !field.optional && !values[field.key].trim(),
-    );
-    if (missingRequiredField) {
+    if (!requiredFieldsComplete(values)) {
         return "Fill in all required fields before verifying.";
     }
 
     return "";
 }
 
-function validateBatchInput(items) {
-    for (const [index, item] of items.entries()) {
-        const validationError = validateLabelInput(item.image, item.values);
-        if (validationError) {
-            return `Label ${index + 1}: ${validationError}`;
-        }
-    }
-
-    return "";
+function requiredFieldsComplete(values) {
+    return FIELD_DEFINITIONS.every(
+        (field) => field.optional || values[field.key].trim(),
+    );
 }
 
 async function readResponseJson(response) {
