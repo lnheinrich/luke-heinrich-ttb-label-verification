@@ -34,6 +34,8 @@ export default function App() {
     const [singleResult, setSingleResult] = useState(null);
     const [singleError, setSingleError] = useState("");
     const [isSingleVerifying, setIsSingleVerifying] = useState(false);
+    const [shouldFlashSingleMissingInputs, setShouldFlashSingleMissingInputs] = useState(false);
+    const singleMissingInputsFlashTimerRef = useRef(null);
     const [batchItems, setBatchItems] = useState(() => [createBatchItem()]);
     const [activeBatchItemId, setActiveBatchItemId] = useState(null);
     const [batchResult, setBatchResult] = useState(null);
@@ -45,7 +47,7 @@ export default function App() {
     const [incompleteLabelsAlert, setIncompleteLabelsAlert] = useState(null);
     const incompleteLabelsAlertTimerRef = useRef(null);
     const alertOrderRef = useRef(0);
-    const [shouldFlashIncompleteLabels, setShouldFlashIncompleteLabels] = useState(false);
+    const [flashingIncompleteItemIds, setFlashingIncompleteItemIds] = useState([]);
     const incompleteLabelFlashTimerRef = useRef(null);
 
     useEffect(() => {
@@ -54,10 +56,18 @@ export default function App() {
         }
     }, [activeBatchItemId, batchItems]);
 
+    useEffect(() => {
+        if (mode !== "batch") {
+            window.clearTimeout(incompleteLabelFlashTimerRef.current);
+            setFlashingIncompleteItemIds([]);
+        }
+    }, [mode]);
+
     useEffect(() => () => {
         window.clearTimeout(duplicateImageAlertTimerRef.current);
         window.clearTimeout(incompleteLabelsAlertTimerRef.current);
         window.clearTimeout(incompleteLabelFlashTimerRef.current);
+        window.clearTimeout(singleMissingInputsFlashTimerRef.current);
     }, []);
 
     async function handleSingleSubmit(event) {
@@ -66,7 +76,8 @@ export default function App() {
 
         const validationError = validateLabelInput(singleImage, singleValues);
         if (validationError) {
-            setSingleError(validationError);
+            showSingleIncompleteAlert();
+            flashSingleMissingInputs();
             return;
         }
 
@@ -103,7 +114,7 @@ export default function App() {
         const incompleteLabelNumbers = getIncompleteBatchLabelNumbers(batchItems);
         if (incompleteLabelNumbers.length > 0) {
             showIncompleteLabelsAlert(incompleteLabelNumbers);
-            flashIncompleteLabels();
+            flashIncompleteLabels(batchItems);
             return;
         }
 
@@ -229,6 +240,10 @@ export default function App() {
         setBatchItems(nextItems);
     }
 
+    function addEmptyBatchItem() {
+        setBatchItems((currentItems) => [...currentItems, createBatchItem()]);
+    }
+
     function removeBatchItem(itemId) {
         const itemIndex = batchItems.findIndex((item) => item.id === itemId);
         if (itemIndex === -1) {
@@ -283,14 +298,41 @@ export default function App() {
         }, 5400);
     }
 
-    function flashIncompleteLabels() {
+    function showSingleIncompleteAlert() {
+        window.clearTimeout(incompleteLabelsAlertTimerRef.current);
+        setIncompleteLabelsAlert({
+            id: crypto.randomUUID(),
+            message: "Label is incomplete",
+            order: getNextAlertOrder(),
+        });
+        incompleteLabelsAlertTimerRef.current = window.setTimeout(() => {
+            setIncompleteLabelsAlert(null);
+        }, 5400);
+    }
+
+    function flashIncompleteLabels(items) {
+        const incompleteItemIds = items
+            .filter((item) => !isBatchItemComplete(item))
+            .map((item) => item.id);
+
         window.clearTimeout(incompleteLabelFlashTimerRef.current);
-        setShouldFlashIncompleteLabels(false);
+        setFlashingIncompleteItemIds([]);
         window.requestAnimationFrame(() => {
-            setShouldFlashIncompleteLabels(true);
+            setFlashingIncompleteItemIds(incompleteItemIds);
         });
         incompleteLabelFlashTimerRef.current = window.setTimeout(() => {
-            setShouldFlashIncompleteLabels(false);
+            setFlashingIncompleteItemIds([]);
+        }, 5400);
+    }
+
+    function flashSingleMissingInputs() {
+        window.clearTimeout(singleMissingInputsFlashTimerRef.current);
+        setShouldFlashSingleMissingInputs(false);
+        window.requestAnimationFrame(() => {
+            setShouldFlashSingleMissingInputs(true);
+        });
+        singleMissingInputsFlashTimerRef.current = window.setTimeout(() => {
+            setShouldFlashSingleMissingInputs(false);
         }, 5400);
     }
 
@@ -372,6 +414,7 @@ export default function App() {
                     {mode === "single" ? (
                         <SingleLabelForm
                             error={singleError}
+                            flashMissingInputs={shouldFlashSingleMissingInputs}
                             formValues={singleValues}
                             image={singleImage}
                             isVerifying={isSingleVerifying}
@@ -384,10 +427,11 @@ export default function App() {
                         <BatchForm
                             batchItems={batchItems}
                             activeItemId={activeBatchItemId}
-                        error={batchError}
-                        flashIncompleteLabels={shouldFlashIncompleteLabels}
-                        isVerifying={isBatchVerifying}
+                            error={batchError}
+                            flashingIncompleteItemIds={flashingIncompleteItemIds}
+                            isVerifying={isBatchVerifying}
                             onActiveItemChange={setActiveBatchItemId}
+                            onAddEmptyLabel={addEmptyBatchItem}
                             onAddImages={addBatchImages}
                             onFieldChange={updateBatchField}
                             onImageChange={updateBatchImage}
@@ -405,6 +449,7 @@ export default function App() {
 
 function SingleLabelForm({
     error,
+    flashMissingInputs,
     formValues,
     image,
     isVerifying,
@@ -413,16 +458,24 @@ function SingleLabelForm({
     onSubmit,
     result,
 }) {
+    const isComplete = isSingleLabelComplete(image, formValues);
+
     return (
         <>
             <form className="verification-form" onSubmit={onSubmit}>
-                <ImagePicker
+                <div className="single-form-header">
+                    <h2>Label Details</h2>
+                    <span className={isComplete ? "editor-status editor-complete" : "editor-status editor-incomplete"}>
+                        {isComplete ? "Ready" : "Incomplete"}
+                    </span>
+                </div>
+                <SingleImageSection
                     image={image}
                     isDisabled={isVerifying}
-                    label="Label Image"
                     onImageChange={onImageChange}
                 />
                 <FieldGrid
+                    flashMissingInputs={flashMissingInputs}
                     formValues={formValues}
                     idPrefix="single"
                     isDisabled={isVerifying}
@@ -433,7 +486,11 @@ function SingleLabelForm({
                     isLoading={isVerifying}
                     loadingText="Reading the label image. This may take a few seconds."
                 />
-                <button className="verify-button" type="submit" disabled={isVerifying}>
+                <button
+                    className={isComplete ? "verify-button" : "verify-button verify-button-incomplete"}
+                    type="submit"
+                    disabled={isVerifying}
+                >
                     {isVerifying ? "Verifying..." : "Verify Label"}
                 </button>
             </form>
@@ -447,9 +504,10 @@ function BatchForm({
     activeItemId,
     batchItems,
     error,
-    flashIncompleteLabels,
+    flashingIncompleteItemIds,
     isVerifying,
     onActiveItemChange,
+    onAddEmptyLabel,
     onAddImages,
     onFieldChange,
     onImageChange,
@@ -458,16 +516,20 @@ function BatchForm({
     result,
     showProgress,
 }) {
+    const batchFormRef = useRef(null);
     const hasIncompleteLabels = batchItems.some((item) => !isBatchItemComplete(item));
 
     return (
         <>
-            <form className="verification-form" onSubmit={onSubmit}>
+            <form className="verification-form" onSubmit={onSubmit} ref={batchFormRef}>
                 <BatchAccordionList
                     activeItemId={activeItemId}
-                    flashIncompleteLabels={flashIncompleteLabels}
+                    batchFormRef={batchFormRef}
+                    flashingIncompleteItemIds={flashingIncompleteItemIds}
+                    hasBatchResults={Boolean(result)}
                     isDisabled={isVerifying}
                     items={batchItems}
+                    onAddEmptyLabel={onAddEmptyLabel}
                     onAddImages={onAddImages}
                     onFieldChange={onFieldChange}
                     onImageChange={onImageChange}
@@ -501,9 +563,12 @@ function BatchForm({
 
 function BatchAccordionList({
     activeItemId,
-    flashIncompleteLabels,
+    batchFormRef,
+    flashingIncompleteItemIds,
+    hasBatchResults,
     isDisabled,
     items,
+    onAddEmptyLabel,
     onAddImages,
     onFieldChange,
     onImageChange,
@@ -513,6 +578,7 @@ function BatchAccordionList({
     const addImagesInputRef = useRef(null);
     const itemRefs = useRef({});
     const hasIncompleteItems = items.some((item) => !isBatchItemComplete(item));
+    const hasSingleItem = items.length === 1;
 
     function handleAddImagesChange(event) {
         onAddImages(event.target.files);
@@ -536,7 +602,14 @@ function BatchAccordionList({
         const nextIncompleteItemId = getNextIncompleteItemId(items, currentItemId);
         if (!nextIncompleteItemId) {
             onToggleItem(null);
-            window.requestAnimationFrame(scrollToPageBottom);
+            window.setTimeout(() => {
+                if (hasBatchResults && batchFormRef.current) {
+                    scrollElementBottomToViewportBottom(batchFormRef.current);
+                    return;
+                }
+
+                scrollToPageBottomIfScrollable();
+            }, 260);
             return;
         }
 
@@ -559,6 +632,7 @@ function BatchAccordionList({
                         type="button"
                         onClick={openAddImagesPicker}
                         disabled={isDisabled}
+                        title="Select one or more images to generate label entries."
                     >
                         Add Images
                     </button>
@@ -580,8 +654,8 @@ function BatchAccordionList({
                 {items.map((item, index) => (
                     <BatchAccordionItem
                         index={index}
-                        flashIncompleteLabels={flashIncompleteLabels}
                         hasIncompleteItems={hasIncompleteItems}
+                        hasSingleItem={hasSingleItem}
                         isDisabled={isDisabled}
                         isExpanded={item.id === activeItemId}
                         item={item}
@@ -591,9 +665,21 @@ function BatchAccordionList({
                         onImageChange={onImageChange}
                         onRemoveItem={onRemoveItem}
                         registerItemRef={registerItemRef}
+                        shouldFlashIncomplete={flashingIncompleteItemIds.includes(item.id)}
                         onToggleItem={onToggleItem}
                     />
                 ))}
+            </div>
+
+            <div className="add-empty-label-row">
+                <button
+                    className="add-empty-label-button"
+                    type="button"
+                    onClick={onAddEmptyLabel}
+                    disabled={isDisabled}
+                >
+                    Add Empty Label
+                </button>
             </div>
         </>
     );
@@ -601,8 +687,8 @@ function BatchAccordionList({
 
 function BatchAccordionItem({
     index,
-    flashIncompleteLabels,
     hasIncompleteItems,
+    hasSingleItem,
     isDisabled,
     isExpanded,
     item,
@@ -611,10 +697,12 @@ function BatchAccordionItem({
     onImageChange,
     onRemoveItem,
     registerItemRef,
+    shouldFlashIncomplete,
     onToggleItem,
 }) {
     const imageInputRef = useRef(null);
     const isComplete = isBatchItemComplete(item);
+    const shouldShowFinish = hasSingleItem || !hasIncompleteItems;
 
     function handleChangeImage(event) {
         const nextImage = event.target.files?.[0];
@@ -637,12 +725,20 @@ function BatchAccordionItem({
         onToggleItem(isExpanded ? null : item.id);
     }
 
+    function handleNextIncompleteClick() {
+        if (hasSingleItem && !isComplete) {
+            return;
+        }
+
+        onNextIncomplete(item.id);
+    }
+
     return (
         <article
             className={getBatchAccordionItemClassName({
-                flashIncompleteLabels,
                 isComplete,
                 isExpanded,
+                shouldFlashIncomplete,
             })}
             ref={(element) => registerItemRef(item.id, element)}
         >
@@ -685,6 +781,7 @@ function BatchAccordionItem({
                                 aria-label={item.image ? `Remove image for Label ${index + 1}` : `Add image for Label ${index + 1}`}
                                 className={item.image ? "expanded-image-control has-image-preview" : "expanded-image-control empty-image-preview"}
                                 type="button"
+                                title={item.image ? undefined : "Select image file"}
                                 onClick={handleImageControlClick}
                                 disabled={isDisabled}
                             >
@@ -714,10 +811,10 @@ function BatchAccordionItem({
                             <button
                                 className={isComplete ? "next-incomplete-button next-incomplete-button-ready" : "next-incomplete-button"}
                                 type="button"
-                                onClick={() => onNextIncomplete(item.id)}
+                                onClick={handleNextIncompleteClick}
                                 disabled={isDisabled}
                             >
-                                {hasIncompleteItems ? "Next Incomplete" : "Finish"}
+                                {shouldShowFinish ? "Finish" : "Next Incomplete"}
                             </button>
                         </div>
                     </div>
@@ -781,7 +878,7 @@ function ImagePreview({ image }) {
     return <img alt="" src={previewUrl} />;
 }
 
-function ImagePicker({ image, isDisabled, label, onImageChange }) {
+function SingleImageSection({ image, isDisabled, onImageChange }) {
     const imageInputRef = useRef(null);
 
     function handleImageChange(event) {
@@ -791,49 +888,43 @@ function ImagePicker({ image, isDisabled, label, onImageChange }) {
         }
 
         onImageChange(nextImage);
+        event.target.value = "";
     }
 
-    function openImagePicker() {
+    function handleImageControlClick() {
+        if (image) {
+            onImageChange(null);
+            return;
+        }
+
         if (imageInputRef.current) {
             imageInputRef.current.value = "";
             imageInputRef.current.click();
         }
     }
 
-    function removeSelectedImage() {
-        onImageChange(null);
-        if (imageInputRef.current) {
-            imageInputRef.current.value = "";
-        }
-    }
-
     return (
-        <div className="upload-field">
-            <span className="upload-label">{label}</span>
-            <div className="upload-control">
-                <button
-                    className="file-button"
-                    type="button"
-                    onClick={openImagePicker}
-                    disabled={isDisabled}
-                >
-                    Choose File
-                </button>
-                <span className="file-name">
-                    {image ? image.name : "No file selected"}
-                </span>
+        <div className="expanded-image-section">
+            <button
+                aria-label={image ? "Remove label image" : "Add label image"}
+                className={image ? "expanded-image-control has-image-preview" : "expanded-image-control empty-image-preview"}
+                type="button"
+                title={image ? undefined : "Select image file"}
+                onClick={handleImageControlClick}
+                disabled={isDisabled}
+            >
                 {image ? (
-                    <button
-                        aria-label="Remove selected image"
-                        className="remove-file-button"
-                        title="Remove image"
-                        type="button"
-                        onClick={removeSelectedImage}
-                        disabled={isDisabled}
-                    >
-                        x
-                    </button>
-                ) : null}
+                    <>
+                        <ImagePreview image={image} />
+                        <span className="preview-remove-overlay">Remove</span>
+                    </>
+                ) : (
+                    <span className="preview-add-icon" aria-hidden="true" />
+                )}
+            </button>
+            <div className="expanded-image-meta">
+                <span className="upload-label">Label Image</span>
+                <TileFileName fileName={image?.name || ""} />
             </div>
             <input
                 ref={imageInputRef}
@@ -848,38 +939,45 @@ function ImagePicker({ image, isDisabled, label, onImageChange }) {
     );
 }
 
-function FieldGrid({ formValues, idPrefix, isDisabled, onFieldChange }) {
+function FieldGrid({ flashMissingInputs = false, formValues, idPrefix, isDisabled, onFieldChange }) {
     return (
         <div className="field-grid">
-            {FIELD_DEFINITIONS.map((field) => (
-                <div
-                    className={field.multiline ? "field-row field-wide" : "field-row"}
-                    key={field.key}
-                >
-                    <label htmlFor={`${idPrefix}-${field.key}`}>
-                        {field.label}
-                        {field.hint ? <span className="inline-hint">({field.hint})</span> : null}
-                        {field.optional ? <span className="label-note">Optional if not on label</span> : null}
-                    </label>
-                    {field.multiline ? (
-                        <textarea
-                            id={`${idPrefix}-${field.key}`}
-                            value={formValues[field.key]}
-                            onChange={(event) => onFieldChange(field.key, event.target.value)}
-                            disabled={isDisabled}
-                            rows={5}
-                        />
-                    ) : (
-                        <input
-                            id={`${idPrefix}-${field.key}`}
-                            type="text"
-                            value={formValues[field.key]}
-                            onChange={(event) => onFieldChange(field.key, event.target.value)}
-                            disabled={isDisabled}
-                        />
-                    )}
-                </div>
-            ))}
+            {FIELD_DEFINITIONS.map((field) => {
+                const shouldFlashField = flashMissingInputs && !field.optional && !formValues[field.key].trim();
+                const inputClassName = shouldFlashField ? "missing-input-flash" : undefined;
+
+                return (
+                    <div
+                        className={field.multiline ? "field-row field-wide" : "field-row"}
+                        key={field.key}
+                    >
+                        <label>
+                            {field.label}
+                            {field.hint ? <span className="inline-hint">({field.hint})</span> : null}
+                            {field.optional ? <span className="label-note">Optional if not on label</span> : null}
+                        </label>
+                        {field.multiline ? (
+                            <textarea
+                                className={inputClassName}
+                                id={`${idPrefix}-${field.key}`}
+                                value={formValues[field.key]}
+                                onChange={(event) => onFieldChange(field.key, event.target.value)}
+                                disabled={isDisabled}
+                                rows={5}
+                            />
+                        ) : (
+                            <input
+                                className={inputClassName}
+                                id={`${idPrefix}-${field.key}`}
+                                type="text"
+                                value={formValues[field.key]}
+                                onChange={(event) => onFieldChange(field.key, event.target.value)}
+                                disabled={isDisabled}
+                            />
+                        )}
+                    </div>
+                );
+            })}
         </div>
     );
 }
@@ -907,10 +1005,13 @@ function ResultsView({ result }) {
 
     return (
         <section className="results-panel" aria-labelledby="results-title">
-            <div className={isApproved ? "verdict verdict-approved" : "verdict verdict-review"}>
-                <span id="results-title">{isApproved ? "Approved" : "Needs Review"}</span>
-                <small>Completed in {formatSeconds(result.latency_ms)} seconds</small>
-            </div>
+            <h2 id="results-title" className="section-title result-title-line">
+                Label Result:
+                <span className={isApproved ? "single-result-pill single-result-approved" : "single-result-pill single-result-review"}>
+                    {isApproved ? "Approved" : "Needs Review"}
+                </span>
+            </h2>
+            <p className="batch-time">Completed in {formatSeconds(result.latency_ms)} seconds</p>
 
             <ResultFields results={result.results} />
         </section>
@@ -919,9 +1020,31 @@ function ResultsView({ result }) {
 
 function BatchResultsView({ result }) {
     const [openItemIndex, setOpenItemIndex] = useState(null);
+    const resultItemRefs = useRef({});
 
     function toggleResultItem(itemIndex) {
-        setOpenItemIndex((currentIndex) => (currentIndex === itemIndex ? null : itemIndex));
+        setOpenItemIndex((currentIndex) => {
+            const shouldScrollToLowerItem = currentIndex !== null && itemIndex > currentIndex;
+            if (shouldScrollToLowerItem) {
+                window.setTimeout(() => {
+                    const resultElement = resultItemRefs.current[itemIndex];
+                    if (resultElement) {
+                        scrollTileToViewportOffset(resultElement, 20);
+                    }
+                }, 240);
+            }
+
+            return currentIndex === itemIndex ? null : itemIndex;
+        });
+    }
+
+    function registerResultItemRef(itemIndex, element) {
+        if (element) {
+            resultItemRefs.current[itemIndex] = element;
+            return;
+        }
+
+        delete resultItemRefs.current[itemIndex];
     }
 
     return (
@@ -942,6 +1065,7 @@ function BatchResultsView({ result }) {
                         item={item}
                         key={item.index}
                         onToggle={toggleResultItem}
+                        registerResultItemRef={registerResultItemRef}
                     />
                 ))}
             </div>
@@ -958,7 +1082,7 @@ function SummaryCard({ label, value, tone }) {
     );
 }
 
-function BatchResultItem({ isOpen, item, onToggle }) {
+function BatchResultItem({ isOpen, item, onToggle, registerResultItemRef }) {
     const verification = item.verification;
     const isApproved = verification?.overall_verdict === "APPROVED";
     const title = `Label ${item.index + 1}: ${item.filename}`;
@@ -975,7 +1099,10 @@ function BatchResultItem({ isOpen, item, onToggle }) {
     }
 
     return (
-        <article className={isOpen ? "batch-result-item is-open" : "batch-result-item"}>
+        <article
+            className={isOpen ? "batch-result-item is-open" : "batch-result-item"}
+            ref={(element) => registerResultItemRef(item.index, element)}
+        >
             <div
                 className="batch-result-summary"
                 onClick={handleHeaderClick}
@@ -1060,16 +1187,20 @@ function isBatchItemComplete(item) {
     return Boolean(item.image) && requiredFieldsComplete(item.values);
 }
 
+function isSingleLabelComplete(image, values) {
+    return Boolean(image) && requiredFieldsComplete(values);
+}
+
 function isBatchItemEmpty(item) {
     return !item.image && FIELD_DEFINITIONS.every((field) => !item.values[field.key].trim());
 }
 
-function getBatchAccordionItemClassName({ flashIncompleteLabels, isComplete, isExpanded }) {
+function getBatchAccordionItemClassName({ isComplete, isExpanded, shouldFlashIncomplete }) {
     const classNames = ["batch-accordion-item"];
     if (isExpanded) {
         classNames.push("expanded-batch-item");
     }
-    if (flashIncompleteLabels && !isExpanded && !isComplete) {
+    if (shouldFlashIncomplete && !isExpanded && !isComplete) {
         classNames.push("flash-incomplete-label");
     }
 
@@ -1121,9 +1252,22 @@ function scrollTileToViewportOffset(element, topOffset) {
     });
 }
 
-function scrollToPageBottom() {
+function scrollElementBottomToViewportBottom(element) {
+    const targetTop = element.getBoundingClientRect().bottom + window.scrollY - window.innerHeight;
     window.scrollTo({
-        top: document.documentElement.scrollHeight,
+        top: Math.max(0, targetTop),
+        behavior: "smooth",
+    });
+}
+
+function scrollToPageBottomIfScrollable() {
+    const maxScrollTop = document.documentElement.scrollHeight - window.innerHeight;
+    if (maxScrollTop <= 0) {
+        return;
+    }
+
+    window.scrollTo({
+        top: maxScrollTop,
         behavior: "smooth",
     });
 }
