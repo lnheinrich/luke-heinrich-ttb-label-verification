@@ -197,6 +197,16 @@ def test_abv_percent_vs_alc_vol_and_proof_passes() -> None:
     assert result_for_field(result, "abv").status == "PASS"
 
 
+# Verifies a standalone proof value converts to half its number as ABV.
+def test_abv_standalone_proof_converts_to_abv() -> None:
+    result = verify_label(
+        make_application(abv="45%"),
+        make_extracted(abv="90 Proof"),
+    )
+
+    assert result_for_field(result, "abv").status == "PASS"
+
+
 # Verifies ABV differences outside tolerance fail.
 def test_abv_outside_tolerance_fails() -> None:
     result = verify_label(
@@ -250,11 +260,31 @@ def test_net_contents_mismatch_or_unsupported_unit_fails() -> None:
     )
     unsupported_result = verify_label(
         make_application(net_contents="750 mL"),
-        make_extracted(net_contents="25 oz"),
+        make_extracted(net_contents="1 pint"),
     )
 
     assert result_for_field(mismatch_result, "net_contents").status == "FAIL"
     assert result_for_field(unsupported_result, "net_contents").status == "FAIL"
+
+
+# Verifies US fluid ounce spellings normalize to milliliters.
+def test_net_contents_fluid_ounces_normalize_to_ml() -> None:
+    fl_oz_result = verify_label(
+        make_application(net_contents="355 mL"),
+        make_extracted(net_contents="12 fl oz"),
+    )
+    dotted_result = verify_label(
+        make_application(net_contents="355 mL"),
+        make_extracted(net_contents="12 FL. OZ."),
+    )
+    bare_oz_result = verify_label(
+        make_application(net_contents="355 mL"),
+        make_extracted(net_contents="12 oz"),
+    )
+
+    assert result_for_field(fl_oz_result, "net_contents").status == "PASS"
+    assert result_for_field(dotted_result, "net_contents").status == "PASS"
+    assert result_for_field(bare_oz_result, "net_contents").status == "PASS"
 
 
 # Verifies the canonical all-caps government warning passes exactly.
