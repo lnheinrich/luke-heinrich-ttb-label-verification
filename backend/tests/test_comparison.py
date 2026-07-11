@@ -267,15 +267,15 @@ def test_correct_all_caps_government_warning_passes() -> None:
     assert result_for_field(result, "government_warning").status == "PASS"
 
 
-# Verifies blank expected warning passes only when no warning is found on the label.
-def test_blank_government_warning_passes_when_extracted_warning_missing() -> None:
+# Verifies the mandatory warning fails when absent from both application and label.
+def test_blank_government_warning_fails_when_extracted_warning_missing() -> None:
     result = verify_label(
         make_application(government_warning=""),
         make_extracted(government_warning=None),
     )
 
     field_result = result_for_field(result, "government_warning")
-    assert field_result.status == "PASS"
+    assert field_result.status == "FAIL"
     assert field_result.found is None
 
 

@@ -149,8 +149,9 @@ def compare_net_contents(expected: str, found: str | None) -> FieldResult:
 def compare_government_warning(expected: str, found: str | None) -> FieldResult:
     expected_collapsed = collapse_whitespace(expected)
     if found is None:
-        status = "PASS" if not expected_collapsed else "FAIL"
-        return build_result("government_warning", "exact", expected, found, status)
+        # The TTB warning is legally mandatory: a missing extraction always
+        # fails, even when the application side is also empty.
+        return build_result("government_warning", "exact", expected, found, "FAIL")
 
     status = "PASS" if expected_collapsed == collapse_whitespace(found) else "FAIL"  # case-sensitive
 
