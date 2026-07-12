@@ -1,24 +1,13 @@
-import { useEffect, useRef, useState } from "react";
-
-const FIELD_DEFINITIONS = [
-    { key: "brand_name", label: "Brand Name" },
-    { key: "class_type", label: "Class / Type" },
-    { key: "abv", label: "Alcohol Content" },
-    { key: "net_contents", label: "Bottle Size", hint: "include units" },
-    { key: "producer", label: "Producer" },
-    { key: "country_of_origin", label: "Country of Origin" },
-    {
-        key: "government_warning",
-        label: "Government Warning",
-        multiline: true,
-        optional: true,
-    },
-];
-
-const FIELD_LABELS = FIELD_DEFINITIONS.reduce((labels, field) => {
-    labels[field.key] = field.label;
-    return labels;
-}, {});
+import { useRef } from "react";
+import BatchResults from "./BatchResults";
+import { FieldGrid } from "./fields";
+import { FormMessages, ImagePreview, TileFileName } from "./shared";
+import { MAX_BATCH_ITEMS, isBatchItemComplete } from "../hooks/useBatchItems";
+import {
+    scrollElementBottomToViewportBottom,
+    scrollTileToViewportOffset,
+    scrollToPageBottomIfScrollable,
+} from "../utils/scroll";
 
 export default function Batch({
     activeItemId,
@@ -76,7 +65,7 @@ export default function Batch({
                 </button>
             </form>
 
-            {result && <BatchResultsView result={result} />}
+            {result && <BatchResults result={result} />}
         </>
     );
 }
@@ -99,6 +88,7 @@ function BatchAccordionList({
     const itemRefs = useRef({});
     const hasIncompleteItems = items.some((item) => !isBatchItemComplete(item));
     const hasSingleItem = items.length === 1;
+    const isAtCapacity = items.length >= MAX_BATCH_ITEMS;
 
     function handleAddImagesChange(event) {
         onAddImages(event.target.files);
@@ -148,15 +138,19 @@ function BatchAccordionList({
                 <h2>Batch Labels</h2>
                 <div className="batch-actions">
                     <button
-                        className="secondary-button"
+                        className={isAtCapacity && !isDisabled ? "secondary-button at-capacity" : "secondary-button"}
                         type="button"
                         onClick={openAddImagesPicker}
-                        disabled={isDisabled}
-                        title="Select one or more images to generate label entries."
+                        disabled={isDisabled || isAtCapacity}
+                        title={
+                            isAtCapacity
+                                ? `Batch is limited to ${MAX_BATCH_ITEMS} labels.`
+                                : "Select one or more images to generate label entries."
+                        }
                     >
                         Add Images
                     </button>
-                    <span>{items.length} labels</span>
+                    <span>{items.length}/{MAX_BATCH_ITEMS} labels</span>
                     <input
                         ref={addImagesInputRef}
                         className="hidden-file-input"
@@ -193,10 +187,11 @@ function BatchAccordionList({
 
             <div className="add-empty-label-row">
                 <button
-                    className="add-empty-label-button"
+                    className={isAtCapacity && !isDisabled ? "add-empty-label-button at-capacity" : "add-empty-label-button"}
                     type="button"
                     onClick={onAddEmptyLabel}
-                    disabled={isDisabled}
+                    disabled={isDisabled || isAtCapacity}
+                    title={isAtCapacity ? `Batch is limited to ${MAX_BATCH_ITEMS} labels.` : undefined}
                 >
                     Add Empty Label
                 </button>
@@ -354,271 +349,6 @@ function BatchAccordionItem({
     );
 }
 
-function TileFileName({ fileName }) {
-    const fileNameRef = useRef(null);
-    const [isTruncated, setIsTruncated] = useState(false);
-
-    useEffect(() => {
-        function updateTruncationState() {
-            const element = fileNameRef.current;
-            setIsTruncated(Boolean(element && element.scrollWidth > element.clientWidth));
-        }
-
-        updateTruncationState();
-        window.addEventListener("resize", updateTruncationState);
-
-        return () => {
-            window.removeEventListener("resize", updateTruncationState);
-        };
-    }, [fileName]);
-
-    return (
-        <span
-            className={fileName ? "tile-file-name" : "tile-file-name empty-file-name"}
-            ref={fileNameRef}
-            title={isTruncated ? fileName : undefined}
-        >
-            {fileName}
-        </span>
-    );
-}
-
-function ImagePreview({ image }) {
-    const [previewUrl, setPreviewUrl] = useState("");
-
-    useEffect(() => {
-        const nextPreviewUrl = URL.createObjectURL(image);
-        setPreviewUrl(nextPreviewUrl);
-
-        return () => {
-            URL.revokeObjectURL(nextPreviewUrl);
-        };
-    }, [image]);
-
-    return <img alt="" src={previewUrl} />;
-}
-
-function FieldGrid({ flashMissingInputs = false, formValues, idPrefix, isDisabled, onFieldChange }) {
-    return (
-        <div className="field-grid">
-            {FIELD_DEFINITIONS.map((field) => {
-                const shouldFlashField = flashMissingInputs && !field.optional && !formValues[field.key].trim();
-                const inputClassName = shouldFlashField ? "missing-input-flash" : undefined;
-                const inputId = `${idPrefix}-${field.key}`;
-
-                return (
-                    <div
-                        className={field.multiline ? "field-row field-wide" : "field-row"}
-                        key={field.key}
-                    >
-                        <label htmlFor={inputId}>
-                            {field.label}
-                            {field.hint ? <span className="inline-hint">({field.hint})</span> : null}
-                            {field.optional ? <span className="label-note">Optional if not on label</span> : null}
-                        </label>
-                        {field.multiline ? (
-                            <textarea
-                                className={inputClassName}
-                                id={inputId}
-                                value={formValues[field.key]}
-                                onChange={(event) => onFieldChange(field.key, event.target.value)}
-                                disabled={isDisabled}
-                                rows={5}
-                            />
-                        ) : (
-                            <input
-                                className={inputClassName}
-                                id={inputId}
-                                type="text"
-                                value={formValues[field.key]}
-                                onChange={(event) => onFieldChange(field.key, event.target.value)}
-                                disabled={isDisabled}
-                            />
-                        )}
-                    </div>
-                );
-            })}
-        </div>
-    );
-}
-
-function FormMessages({ error, isLoading, loadingText }) {
-    return (
-        <>
-            {error && (
-                <div className="message message-error" role="alert">
-                    {error}
-                </div>
-            )}
-
-            {isLoading && (
-                <div className="message message-loading" role="status">
-                    {loadingText}
-                </div>
-            )}
-        </>
-    );
-}
-
-function BatchResultsView({ result }) {
-    const [openItemIndex, setOpenItemIndex] = useState(null);
-    const resultItemRefs = useRef({});
-
-    function toggleResultItem(itemIndex) {
-        setOpenItemIndex((currentIndex) => {
-            const shouldScrollToLowerItem = currentIndex !== null && itemIndex > currentIndex;
-            if (shouldScrollToLowerItem) {
-                window.setTimeout(() => {
-                    const resultElement = resultItemRefs.current[itemIndex];
-                    if (resultElement) {
-                        scrollTileToViewportOffset(resultElement, 20);
-                    }
-                }, 240);
-            }
-
-            return currentIndex === itemIndex ? null : itemIndex;
-        });
-    }
-
-    function registerResultItemRef(itemIndex, element) {
-        if (element) {
-            resultItemRefs.current[itemIndex] = element;
-            return;
-        }
-
-        delete resultItemRefs.current[itemIndex];
-    }
-
-    return (
-        <section className="results-panel" aria-labelledby="batch-results-title">
-            <h2 id="batch-results-title" className="section-title">Batch Results</h2>
-            <div className="summary-grid">
-                <SummaryCard label="Passed" value={result.summary.passed} tone="passed" />
-                <SummaryCard label="Needs Review" value={result.summary.needs_review} tone="review" />
-                <SummaryCard label="Total" value={result.summary.total} tone="total" />
-            </div>
-
-            <div className="batch-results-list">
-                {result.items.map((item) => (
-                    <BatchResultItem
-                        isOpen={item.index === openItemIndex}
-                        item={item}
-                        key={item.index}
-                        onToggle={toggleResultItem}
-                        registerResultItemRef={registerResultItemRef}
-                    />
-                ))}
-            </div>
-        </section>
-    );
-}
-
-function SummaryCard({ label, value, tone }) {
-    return (
-        <div className={`summary-card summary-${tone}`}>
-            <span>{label}</span>
-            <strong>{value}</strong>
-        </div>
-    );
-}
-
-function BatchResultItem({ isOpen, item, onToggle, registerResultItemRef }) {
-    const verification = item.verification;
-    const isApproved = verification?.overall_verdict === "APPROVED";
-    const title = `Label ${item.index + 1}: ${item.filename}`;
-
-    function handleHeaderClick() {
-        onToggle(item.index);
-    }
-
-    function handleHeaderKeyDown(event) {
-        if (event.key === "Enter" || event.key === " ") {
-            event.preventDefault();
-            onToggle(item.index);
-        }
-    }
-
-    return (
-        <article
-            className={isOpen ? "batch-result-item is-open" : "batch-result-item"}
-            ref={(element) => registerResultItemRef(item.index, element)}
-        >
-            <div
-                className="batch-result-summary"
-                onClick={handleHeaderClick}
-                onKeyDown={handleHeaderKeyDown}
-                role="button"
-                tabIndex={0}
-            >
-                <span className="accordion-title">
-                    {title}
-                    <span className="accordion-arrow" aria-hidden="true" />
-                </span>
-                <strong className={item.status === "FAILED" ? "item-failed" : isApproved ? "item-approved" : "item-review"}>
-                    {item.status === "FAILED" ? "Failed" : isApproved ? "Approved" : "Needs Review"}
-                </strong>
-            </div>
-            <div
-                aria-hidden={!isOpen}
-                className={isOpen ? "batch-result-panel expanded-result-panel" : "batch-result-panel"}
-                inert={isOpen ? undefined : ""}
-            >
-                <div className="batch-result-panel-inner">
-                    {item.status === "FAILED" ? (
-                        <div className="message message-error">{item.error}</div>
-                    ) : (
-                        <>
-                            <p className="batch-time">
-                                Completed in {formatSeconds(verification.latency_ms)} seconds
-                            </p>
-                            <ResultFields results={verification.results} />
-                        </>
-                    )}
-                </div>
-            </div>
-        </article>
-    );
-}
-
-function ResultFields({ results }) {
-    return (
-        <div className="result-list">
-            {results.map((fieldResult) => (
-                <FieldResultRow fieldResult={fieldResult} key={fieldResult.field} />
-            ))}
-        </div>
-    );
-}
-
-function FieldResultRow({ fieldResult }) {
-    const didPass = fieldResult.status === "PASS";
-
-    return (
-        <article className={didPass ? "result-row result-pass" : "result-row result-fail"}>
-            <div className="result-heading">
-                <h2>{FIELD_LABELS[fieldResult.field] || fieldResult.field}</h2>
-                <span className={didPass ? "status-pill pass-pill" : "status-pill fail-pill"}>
-                    {didPass ? "PASS" : "FAIL"}
-                </span>
-            </div>
-            <dl className="comparison-values">
-                <div>
-                    <dt>Application says</dt>
-                    <dd>{displayValue(fieldResult.expected)}</dd>
-                </div>
-                <div>
-                    <dt>Label shows</dt>
-                    <dd>{displayValue(fieldResult.found)}</dd>
-                </div>
-            </dl>
-        </article>
-    );
-}
-
-function isBatchItemComplete(item) {
-    return Boolean(item.image) && requiredFieldsComplete(item.values);
-}
-
 function getBatchAccordionItemClassName({ isComplete, isExpanded, shouldFlashIncomplete }) {
     const classNames = ["batch-accordion-item"];
     if (isExpanded) {
@@ -645,46 +375,4 @@ function getNextIncompleteItemId(items, currentItemId) {
     }
 
     return items.find((item) => !isBatchItemComplete(item))?.id || null;
-}
-
-function scrollTileToViewportOffset(element, topOffset) {
-    element.style.scrollMarginTop = `${topOffset}px`;
-    element.scrollIntoView({
-        behavior: "smooth",
-        block: "start",
-    });
-}
-
-function scrollElementBottomToViewportBottom(element) {
-    const targetTop = element.getBoundingClientRect().bottom + window.scrollY - window.innerHeight;
-    window.scrollTo({
-        top: Math.max(0, targetTop),
-        behavior: "smooth",
-    });
-}
-
-function scrollToPageBottomIfScrollable() {
-    const maxScrollTop = document.documentElement.scrollHeight - window.innerHeight;
-    if (maxScrollTop <= 0) {
-        return;
-    }
-
-    window.scrollTo({
-        top: maxScrollTop,
-        behavior: "smooth",
-    });
-}
-
-function requiredFieldsComplete(values) {
-    return FIELD_DEFINITIONS.every(
-        (field) => field.optional || values[field.key].trim(),
-    );
-}
-
-function displayValue(value) {
-    return value || "Not found on label";
-}
-
-function formatSeconds(latencyMs) {
-    return (latencyMs / 1000).toFixed(1);
 }

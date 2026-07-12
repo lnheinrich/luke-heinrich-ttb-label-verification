@@ -792,6 +792,11 @@ textarea:disabled {
     opacity: 0.7;
 }
 
+/* Buttons disabled by the batch cap are blocked, not busy. */
+.at-capacity:disabled {
+    cursor: not-allowed;
+}
+
 .results-panel {
     margin-top: 28px;
 }

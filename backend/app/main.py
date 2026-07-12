@@ -30,6 +30,7 @@ load_dotenv()
 APP_NAME = "ttb-label-verification"
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
 BATCH_CONCURRENCY = 3
+MAX_BATCH_SIZE = int(os.getenv("MAX_BATCH_SIZE", "10"))
 SUPPORTED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
 logger = logging.getLogger(__name__)
 
@@ -383,12 +384,18 @@ def parse_batch_application_data(application_data: str) -> list[object]:
     return parsed
 
 
-# Reject only fully empty batch requests; count mismatches degrade per-item.
+# Reject empty or oversized batch requests before any image bytes are read;
+# count mismatches degrade per-item.
 def validate_batch_shape(images: list[UploadFile], parsed_items: list[object]) -> None:
     if not images or not parsed_items:
         raise HTTPException(
             status_code=422,
             detail="Batch request must include at least one image and application data pair.",
+        )
+    if max(len(images), len(parsed_items)) > MAX_BATCH_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Batch is too large. Maximum is {MAX_BATCH_SIZE} labels per request.",
         )
 
 
