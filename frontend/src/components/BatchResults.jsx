@@ -73,24 +73,16 @@ function BatchResultItem({ isOpen, item, onToggle, registerResultItemRef }) {
         onToggle(item.index);
     }
 
-    function handleHeaderKeyDown(event) {
-        if (event.key === "Enter" || event.key === " ") {
-            event.preventDefault();
-            onToggle(item.index);
-        }
-    }
-
     return (
         <article
             className={isOpen ? "batch-result-item is-open" : "batch-result-item"}
             ref={(element) => registerResultItemRef(item.index, element)}
         >
-            <div
+            <button
+                aria-expanded={isOpen}
                 className="batch-result-summary"
+                type="button"
                 onClick={handleHeaderClick}
-                onKeyDown={handleHeaderKeyDown}
-                role="button"
-                tabIndex={0}
             >
                 <span className="accordion-title">
                     {title}
@@ -99,7 +91,7 @@ function BatchResultItem({ isOpen, item, onToggle, registerResultItemRef }) {
                 <strong className={item.status === "FAILED" ? "item-failed" : isApproved ? "item-approved" : "item-review"}>
                     {item.status === "FAILED" ? "Failed" : isApproved ? "Approved" : "Needs Review"}
                 </strong>
-            </div>
+            </button>
             <div
                 aria-hidden={!isOpen}
                 className={isOpen ? "batch-result-panel expanded-result-panel" : "batch-result-panel"}

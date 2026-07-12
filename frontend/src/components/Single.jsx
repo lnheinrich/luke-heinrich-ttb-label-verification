@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 import { FieldGrid, requiredFieldsComplete } from "./fields";
 import { FormMessages, ImagePreview, ResultFields, TileFileName, formatSeconds } from "./shared";
 
@@ -107,7 +107,7 @@ function SingleImageSection({ image, isDisabled, onImageChange }) {
                 ref={imageInputRef}
                 className="hidden-file-input"
                 type="file"
-                accept="image/jpeg,image/png,image/webp"
+                accept="image/*"
                 onChange={handleImageChange}
                 disabled={isDisabled}
                 tabIndex={-1}
@@ -117,11 +117,21 @@ function SingleImageSection({ image, isDisabled, onImageChange }) {
 }
 
 function ResultsView({ result }) {
+    const headingRef = useRef(null);
     const isApproved = result.overall_verdict === "APPROVED";
+
+    // Move focus to the outcome so keyboard and screen-reader users are not
+    // left below the fold after the result renders.
+    useEffect(() => {
+        if (headingRef.current) {
+            headingRef.current.focus({ preventScroll: true });
+            headingRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+    }, [result]);
 
     return (
         <section className="results-panel" aria-labelledby="results-title">
-            <h2 id="results-title" className="section-title result-title-line">
+            <h2 id="results-title" className="section-title result-title-line" ref={headingRef} tabIndex={-1}>
                 Label Result:
                 <span className={isApproved ? "single-result-pill single-result-approved" : "single-result-pill single-result-review"}>
                     {isApproved ? "Approved" : "Needs Review"}

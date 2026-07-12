@@ -155,7 +155,7 @@ function BatchAccordionList({
                         ref={addImagesInputRef}
                         className="hidden-file-input"
                         type="file"
-                        accept="image/jpeg,image/png,image/webp"
+                        accept="image/*"
                         multiple
                         onChange={handleAddImagesChange}
                         disabled={isDisabled}
@@ -340,7 +340,7 @@ function BatchAccordionItem({
                 ref={imageInputRef}
                 className="hidden-file-input"
                 type="file"
-                accept="image/jpeg,image/png,image/webp"
+                accept="image/*"
                 onChange={handleChangeImage}
                 disabled={isDisabled}
                 tabIndex={-1}

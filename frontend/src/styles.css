@@ -299,6 +299,31 @@ textarea:disabled {
     gap: 8px;
 }
 
+.measure-input-row {
+    display: flex;
+    gap: 8px;
+}
+
+.measure-input-row input {
+    flex: 1;
+    min-width: 0;
+}
+
+.measure-unit-select {
+    background: #ffffff;
+    border: 2px solid #7b8998;
+    border-radius: 8px;
+    color: #102033;
+    cursor: pointer;
+    min-height: 54px;
+    padding: 0 12px;
+}
+
+.measure-unit-select:disabled {
+    cursor: wait;
+    opacity: 0.7;
+}
+
 .field-wide {
     grid-column: 1 / -1;
 }
@@ -808,6 +833,11 @@ textarea:disabled {
     gap: 8px;
 }
 
+/* The heading only receives focus programmatically, never by tabbing. */
+.result-title-line:focus {
+    outline: none;
+}
+
 .single-result-approved {
     background: #dff3e7;
     color: #145233;
@@ -929,15 +959,17 @@ textarea:disabled {
 
 .batch-result-summary {
     align-items: center;
+    background: transparent;
+    border: 0;
+    cursor: pointer;
     display: grid;
+    font: inherit;
     gap: 16px;
     grid-template-columns: minmax(0, 1fr) auto;
     min-height: 64px;
     padding: 16px;
-}
-
-.batch-result-summary {
-    cursor: pointer;
+    text-align: left;
+    width: 100%;
 }
 
 .batch-result-summary > .accordion-title {

@@ -292,6 +292,7 @@ export default function App() {
                         >
                             <span className="mode-highlight" aria-hidden="true" />
                             <button
+                                aria-pressed={mode === "single"}
                                 className={mode === "single" ? "mode-button active-mode" : "mode-button"}
                                 type="button"
                                 onClick={() => setMode("single")}
@@ -299,6 +300,7 @@ export default function App() {
                                 Single
                             </button>
                             <button
+                                aria-pressed={mode === "batch"}
                                 className={mode === "batch" ? "mode-button active-mode" : "mode-button"}
                                 type="button"
                                 onClick={() => setMode("batch")}
