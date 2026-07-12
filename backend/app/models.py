@@ -61,16 +61,14 @@ class BatchItemResult(BaseModel):
     error: str | None = None
 
 
-# Aggregate counts for a completed batch request.
+# Aggregate counts for a completed batch request; failed items count as review cases.
 class BatchSummary(BaseModel):
     passed: int
     needs_review: int
-    failed: int
     total: int
 
 
-# Full batch response with item drill-down and aggregate timing.
+# Full batch response with item drill-down.
 class BatchResult(BaseModel):
     items: list[BatchItemResult]
     summary: BatchSummary
-    latency_ms: int

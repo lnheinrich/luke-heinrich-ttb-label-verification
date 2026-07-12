@@ -7,7 +7,7 @@ from app.models import ApplicationData, ExtractedLabel, FieldResult, Verificatio
 
 FUZZY_THRESHOLD = 90
 FUZZY_CONTAINS_THRESHOLD = 90
-MIN_FUZZY_CONTAINS_CHARS = 3
+MIN_FUZZY_CONTAINS_CHARS = 5
 ABV_TOLERANCE = 0.1
 
 COUNTRY_ALIASES = {
@@ -18,6 +18,21 @@ COUNTRY_ALIASES = {
     "u s a": "united states",
     "united states": "united states",
     "united states of america": "united states",
+    "uk": "united kingdom",
+    "u k": "united kingdom",
+    "united kingdom": "united kingdom",
+    "great britain": "united kingdom",
+    "britain": "united kingdom",
+    "france": "france",
+    "italy": "italy",
+    "italia": "italy",
+    "spain": "spain",
+    "espana": "spain",
+    "españa": "spain",
+    "germany": "germany",
+    "deutschland": "germany",
+    "portugal": "portugal",
+    "australia": "australia",
 }
 
 UNIT_TO_ML = {

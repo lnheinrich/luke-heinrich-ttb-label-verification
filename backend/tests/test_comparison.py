@@ -177,6 +177,26 @@ def test_country_synonym_america_vs_u_s_a_passes() -> None:
     assert result_for_field(result, "country_of_origin").status == "PASS"
 
 
+# Verifies newly added country aliases collapse to one canonical value.
+def test_country_synonym_expanded_aliases_pass() -> None:
+    uk_result = verify_label(
+        make_application(country_of_origin="UK"),
+        make_extracted(country_of_origin="United Kingdom"),
+    )
+    italy_result = verify_label(
+        make_application(country_of_origin="Italy"),
+        make_extracted(country_of_origin="Italia"),
+    )
+    germany_result = verify_label(
+        make_application(country_of_origin="Germany"),
+        make_extracted(country_of_origin="Deutschland"),
+    )
+
+    assert result_for_field(uk_result, "country_of_origin").status == "PASS"
+    assert result_for_field(italy_result, "country_of_origin").status == "PASS"
+    assert result_for_field(germany_result, "country_of_origin").status == "PASS"
+
+
 # Verifies different countries fail after normalization.
 def test_country_mismatch_fails() -> None:
     result = verify_label(

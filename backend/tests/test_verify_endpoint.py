@@ -413,7 +413,6 @@ async def test_verify_batch_returns_ordered_items_and_summary() -> None:
 
     assert result.summary.passed == 1
     assert result.summary.needs_review == 1
-    assert result.summary.failed == 0
     assert result.summary.total == 2
     assert result.items[0].index == 0
     assert result.items[0].filename == "first.jpg"
@@ -439,8 +438,7 @@ async def test_verify_batch_isolates_provider_failure_per_item() -> None:
     )
 
     assert result.summary.passed == 1
-    assert result.summary.needs_review == 0
-    assert result.summary.failed == 1
+    assert result.summary.needs_review == 1
     assert result.summary.total == 2
     assert result.items[0].status == "COMPLETED"
     assert result.items[1].status == "FAILED"
@@ -465,7 +463,7 @@ async def test_verify_batch_isolates_bad_file_type_per_item() -> None:
     )
 
     assert result.summary.passed == 1
-    assert result.summary.failed == 1
+    assert result.summary.needs_review == 1
     assert result.items[1].status == "FAILED"
     assert result.items[1].error == "Unsupported image type. Use JPEG, PNG, or WebP."
 
@@ -483,27 +481,47 @@ async def test_verify_batch_isolates_invalid_item_application_data() -> None:
     )
 
     assert result.summary.passed == 1
-    assert result.summary.failed == 1
+    assert result.summary.needs_review == 1
     assert result.items[1].status == "FAILED"
     assert result.items[1].error == "Application data must include all required fields."
 
 
-# Verifies mismatched image and data counts fail the whole batch request.
+# Verifies an image without application data degrades to an item failure.
 @pytest.mark.anyio
-async def test_verify_batch_mismatched_counts_returns_422() -> None:
-    with pytest.raises(HTTPException) as exc_info:
-        await call_verify_batch(
-            application_items=[make_application_data()],
-            images=[
-                make_upload(image_bytes=b"approved", filename="first.jpg"),
-                make_upload(image_bytes=b"approved", filename="second.jpg"),
-            ],
-        )
-
-    assert exc_info.value.status_code == 422
-    assert exc_info.value.detail == (
-        "Batch request must include one application data object for each image."
+async def test_verify_batch_extra_image_degrades_per_item() -> None:
+    result = await call_verify_batch(
+        application_items=[make_application_data()],
+        images=[
+            make_upload(image_bytes=b"approved", filename="first.jpg"),
+            make_upload(image_bytes=b"approved", filename="second.jpg"),
+        ],
     )
+
+    assert result.summary.passed == 1
+    assert result.summary.needs_review == 1
+    assert result.summary.total == 2
+    assert result.items[0].status == "COMPLETED"
+    assert result.items[1].index == 1
+    assert result.items[1].filename == "second.jpg"
+    assert result.items[1].status == "FAILED"
+    assert result.items[1].error == "No application data was provided for this image."
+
+
+# Verifies application data without an image degrades to an item failure.
+@pytest.mark.anyio
+async def test_verify_batch_extra_application_data_degrades_per_item() -> None:
+    result = await call_verify_batch(
+        application_items=[make_application_data(), make_application_data()],
+        images=[make_upload(image_bytes=b"approved", filename="first.jpg")],
+    )
+
+    assert result.summary.passed == 1
+    assert result.summary.needs_review == 1
+    assert result.summary.total == 2
+    assert result.items[0].status == "COMPLETED"
+    assert result.items[1].index == 1
+    assert result.items[1].status == "FAILED"
+    assert result.items[1].error == "No image was provided for this application data."
 
 
 # Verifies larger batches are accepted while concurrency remains bounded.
