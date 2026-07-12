@@ -495,10 +495,8 @@ function BatchResultsView({ result }) {
             <div className="summary-grid">
                 <SummaryCard label="Passed" value={result.summary.passed} tone="passed" />
                 <SummaryCard label="Needs Review" value={result.summary.needs_review} tone="review" />
-                <SummaryCard label="Failed" value={result.summary.failed} tone="failed" />
                 <SummaryCard label="Total" value={result.summary.total} tone="total" />
             </div>
-            <p className="batch-time">Completed in {formatSeconds(result.latency_ms)} seconds</p>
 
             <div className="batch-results-list">
                 {result.items.map((item) => (

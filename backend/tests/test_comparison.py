@@ -177,6 +177,26 @@ def test_country_synonym_america_vs_u_s_a_passes() -> None:
     assert result_for_field(result, "country_of_origin").status == "PASS"
 
 
+# Verifies newly added country aliases collapse to one canonical value.
+def test_country_synonym_expanded_aliases_pass() -> None:
+    uk_result = verify_label(
+        make_application(country_of_origin="UK"),
+        make_extracted(country_of_origin="United Kingdom"),
+    )
+    italy_result = verify_label(
+        make_application(country_of_origin="Italy"),
+        make_extracted(country_of_origin="Italia"),
+    )
+    germany_result = verify_label(
+        make_application(country_of_origin="Germany"),
+        make_extracted(country_of_origin="Deutschland"),
+    )
+
+    assert result_for_field(uk_result, "country_of_origin").status == "PASS"
+    assert result_for_field(italy_result, "country_of_origin").status == "PASS"
+    assert result_for_field(germany_result, "country_of_origin").status == "PASS"
+
+
 # Verifies different countries fail after normalization.
 def test_country_mismatch_fails() -> None:
     result = verify_label(
@@ -192,6 +212,16 @@ def test_abv_percent_vs_alc_vol_and_proof_passes() -> None:
     result = verify_label(
         make_application(abv="45%"),
         make_extracted(abv="45% Alc./Vol. (90 Proof)"),
+    )
+
+    assert result_for_field(result, "abv").status == "PASS"
+
+
+# Verifies a standalone proof value converts to half its number as ABV.
+def test_abv_standalone_proof_converts_to_abv() -> None:
+    result = verify_label(
+        make_application(abv="45%"),
+        make_extracted(abv="90 Proof"),
     )
 
     assert result_for_field(result, "abv").status == "PASS"
@@ -250,11 +280,31 @@ def test_net_contents_mismatch_or_unsupported_unit_fails() -> None:
     )
     unsupported_result = verify_label(
         make_application(net_contents="750 mL"),
-        make_extracted(net_contents="25 oz"),
+        make_extracted(net_contents="1 pint"),
     )
 
     assert result_for_field(mismatch_result, "net_contents").status == "FAIL"
     assert result_for_field(unsupported_result, "net_contents").status == "FAIL"
+
+
+# Verifies US fluid ounce spellings normalize to milliliters.
+def test_net_contents_fluid_ounces_normalize_to_ml() -> None:
+    fl_oz_result = verify_label(
+        make_application(net_contents="355 mL"),
+        make_extracted(net_contents="12 fl oz"),
+    )
+    dotted_result = verify_label(
+        make_application(net_contents="355 mL"),
+        make_extracted(net_contents="12 FL. OZ."),
+    )
+    bare_oz_result = verify_label(
+        make_application(net_contents="355 mL"),
+        make_extracted(net_contents="12 oz"),
+    )
+
+    assert result_for_field(fl_oz_result, "net_contents").status == "PASS"
+    assert result_for_field(dotted_result, "net_contents").status == "PASS"
+    assert result_for_field(bare_oz_result, "net_contents").status == "PASS"
 
 
 # Verifies the canonical all-caps government warning passes exactly.
@@ -267,15 +317,15 @@ def test_correct_all_caps_government_warning_passes() -> None:
     assert result_for_field(result, "government_warning").status == "PASS"
 
 
-# Verifies blank expected warning passes only when no warning is found on the label.
-def test_blank_government_warning_passes_when_extracted_warning_missing() -> None:
+# Verifies the mandatory warning fails when absent from both application and label.
+def test_blank_government_warning_fails_when_extracted_warning_missing() -> None:
     result = verify_label(
         make_application(government_warning=""),
         make_extracted(government_warning=None),
     )
 
     field_result = result_for_field(result, "government_warning")
-    assert field_result.status == "PASS"
+    assert field_result.status == "FAIL"
     assert field_result.found is None
 
 

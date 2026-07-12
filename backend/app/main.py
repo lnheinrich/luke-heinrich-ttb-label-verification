@@ -170,29 +170,31 @@ async def verify_batch(
     validate_batch_shape(images, parsed_items)
 
     semaphore = asyncio.Semaphore(BATCH_CONCURRENCY)
+    pair_count = min(len(images), len(parsed_items))
     tasks = [
         verify_batch_item(
             index=index,
-            image=image,
+            image=images[index],
             application_payload=parsed_items[index],
             vision_service=vision_service,
             extract_semaphore=semaphore,
         )
-        for index, image in enumerate(images)
+        for index in range(pair_count)
     ]
-    items = await asyncio.gather(*tasks)
+    items = list(await asyncio.gather(*tasks))
+    items.extend(build_unpaired_batch_items(images, parsed_items, pair_count))
     summary = build_batch_summary(items)
-    latency_ms = elapsed_ms(start_time)
+    failed_items = sum(1 for item in items if item.status == "FAILED")
     logger.info(
-        "verify_batch latency_ms=%s total=%s passed=%s needs_review=%s failed=%s",
-        latency_ms,
+        "verify_batch latency_ms=%s total=%s passed=%s needs_review=%s failed_items=%s",
+        elapsed_ms(start_time),
         summary.total,
         summary.passed,
         summary.needs_review,
-        summary.failed,
+        failed_items,
     )
 
-    return BatchResult(items=items, summary=summary, latency_ms=latency_ms)
+    return BatchResult(items=items, summary=summary)
 
 
 # Verify one uploaded image after request parsing has succeeded.
@@ -356,7 +358,7 @@ def parse_application_data_object(application_data: object) -> ApplicationData:
     return ApplicationData.model_validate(application_data)
 
 
-# Parse batch application data as an array; shape mismatches fail the whole request.
+# Parse batch application data as an array; malformed JSON fails the whole request.
 def parse_batch_application_data(application_data: str) -> list[object]:
     if not application_data.strip():
         raise HTTPException(
@@ -381,18 +383,40 @@ def parse_batch_application_data(application_data: str) -> list[object]:
     return parsed
 
 
-# Validate request-level batch shape before launching item work.
+# Reject only fully empty batch requests; count mismatches degrade per-item.
 def validate_batch_shape(images: list[UploadFile], parsed_items: list[object]) -> None:
     if not images or not parsed_items:
         raise HTTPException(
             status_code=422,
             detail="Batch request must include at least one image and application data pair.",
         )
-    if len(images) != len(parsed_items):
-        raise HTTPException(
-            status_code=422,
-            detail="Batch request must include one application data object for each image.",
+
+
+# Degrade images or application entries beyond the paired range to item failures.
+def build_unpaired_batch_items(
+    images: list[UploadFile],
+    parsed_items: list[object],
+    pair_count: int,
+) -> list[BatchItemResult]:
+    unpaired = [
+        build_failed_batch_item(
+            index,
+            images[index].filename or f"Label {index + 1}",
+            "No application data was provided for this image.",
         )
+        for index in range(pair_count, len(images))
+    ]
+    unpaired.extend(
+        build_failed_batch_item(
+            index,
+            f"Label {index + 1}",
+            "No image was provided for this application data.",
+        )
+        for index in range(pair_count, len(parsed_items))
+    )
+
+    return unpaired
+
 
 # Build a failed item while preserving batch order and filename.
 def build_failed_batch_item(index: int, filename: str, error: str) -> BatchItemResult:
@@ -404,7 +428,7 @@ def build_failed_batch_item(index: int, filename: str, error: str) -> BatchItemR
     )
 
 
-# Count completed verdicts and item-level failures for the batch summary.
+# Count batch verdicts; failed items are review cases, not a separate bucket.
 def build_batch_summary(items: list[BatchItemResult]) -> BatchSummary:
     passed = sum(
         1
@@ -412,18 +436,10 @@ def build_batch_summary(items: list[BatchItemResult]) -> BatchSummary:
         if item.verification is not None
         and item.verification.overall_verdict == "APPROVED"
     )
-    needs_review = sum(
-        1
-        for item in items
-        if item.verification is not None
-        and item.verification.overall_verdict == "NEEDS_REVIEW"
-    )
-    failed = sum(1 for item in items if item.status == "FAILED")
 
     return BatchSummary(
         passed=passed,
-        needs_review=needs_review,
-        failed=failed,
+        needs_review=len(items) - passed,
         total=len(items),
     )
 

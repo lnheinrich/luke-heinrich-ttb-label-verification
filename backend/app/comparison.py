@@ -7,7 +7,7 @@ from app.models import ApplicationData, ExtractedLabel, FieldResult, Verificatio
 
 FUZZY_THRESHOLD = 90
 FUZZY_CONTAINS_THRESHOLD = 90
-MIN_FUZZY_CONTAINS_CHARS = 3
+MIN_FUZZY_CONTAINS_CHARS = 5
 ABV_TOLERANCE = 0.1
 
 COUNTRY_ALIASES = {
@@ -18,6 +18,21 @@ COUNTRY_ALIASES = {
     "u s a": "united states",
     "united states": "united states",
     "united states of america": "united states",
+    "uk": "united kingdom",
+    "u k": "united kingdom",
+    "united kingdom": "united kingdom",
+    "great britain": "united kingdom",
+    "britain": "united kingdom",
+    "france": "france",
+    "italy": "italy",
+    "italia": "italy",
+    "spain": "spain",
+    "espana": "spain",
+    "españa": "spain",
+    "germany": "germany",
+    "deutschland": "germany",
+    "portugal": "portugal",
+    "australia": "australia",
 }
 
 UNIT_TO_ML = {
@@ -28,6 +43,8 @@ UNIT_TO_ML = {
     "liter": 1000,
     "liters": 1000,
     "cl": 10,
+    "floz": 29.5735,
+    "oz": 29.5735,
 }
 
 
@@ -138,7 +155,7 @@ def compare_net_contents(expected: str, found: str | None) -> FieldResult:
         "PASS"
         if expected_ml is not None
         and found_ml is not None
-        and abs(expected_ml - found_ml) < 0.01
+        and abs(expected_ml - found_ml) <= 1.0
         else "FAIL"
     )
 
@@ -149,8 +166,9 @@ def compare_net_contents(expected: str, found: str | None) -> FieldResult:
 def compare_government_warning(expected: str, found: str | None) -> FieldResult:
     expected_collapsed = collapse_whitespace(expected)
     if found is None:
-        status = "PASS" if not expected_collapsed else "FAIL"
-        return build_result("government_warning", "exact", expected, found, status)
+        # The TTB warning is legally mandatory: a missing extraction always
+        # fails, even when the application side is also empty.
+        return build_result("government_warning", "exact", expected, found, "FAIL")
 
     status = "PASS" if expected_collapsed == collapse_whitespace(found) else "FAIL"  # case-sensitive
 
@@ -216,6 +234,10 @@ def parse_abv(value: str) -> float | None:
     if percent_match:
         return float(percent_match.group(1))
 
+    proof_match = re.search(r"(\d+(?:\.\d+)?)\s*proof", value, flags=re.IGNORECASE)
+    if proof_match:
+        return float(proof_match.group(1)) / 2
+
     number_match = re.search(r"\d+(?:\.\d+)?", value)
     if number_match:
         return float(number_match.group(0))
@@ -226,7 +248,7 @@ def parse_abv(value: str) -> float | None:
 # Parse a package size and return the equivalent number of milliliters.
 def parse_net_contents_ml(value: str) -> float | None:
     match = re.search(
-        r"(\d+(?:\.\d+)?)\s*(milliliters?|ml|liters?|l|cl)\b",
+        r"(\d+(?:\.\d+)?)\s*(milliliters?|ml|liters?|l|cl|fl\.?\s*oz|oz)\b",
         value,
         flags=re.IGNORECASE,
     )
@@ -234,7 +256,8 @@ def parse_net_contents_ml(value: str) -> float | None:
         return None
 
     amount = float(match.group(1))
-    unit = match.group(2).lower()
+    # Strip dots and spaces so "fl oz", "fl. oz.", and "FL.OZ" all key as "floz".
+    unit = re.sub(r"[.\s]", "", match.group(2).lower())
 
     return amount * UNIT_TO_ML[unit]
 
