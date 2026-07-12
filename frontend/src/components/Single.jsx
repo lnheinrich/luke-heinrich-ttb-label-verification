@@ -1,24 +1,6 @@
-import { useEffect, useRef, useState } from "react";
-
-const FIELD_DEFINITIONS = [
-    { key: "brand_name", label: "Brand Name" },
-    { key: "class_type", label: "Class / Type" },
-    { key: "abv", label: "Alcohol Content" },
-    { key: "net_contents", label: "Bottle Size", hint: "include units" },
-    { key: "producer", label: "Producer" },
-    { key: "country_of_origin", label: "Country of Origin" },
-    {
-        key: "government_warning",
-        label: "Government Warning",
-        multiline: true,
-        optional: true,
-    },
-];
-
-const FIELD_LABELS = FIELD_DEFINITIONS.reduce((labels, field) => {
-    labels[field.key] = field.label;
-    return labels;
-}, {});
+import { useEffect, useRef } from "react";
+import { FieldGrid, requiredFieldsComplete } from "./fields";
+import { FormMessages, ImagePreview, ResultFields, TileFileName, formatSeconds } from "./shared";
 
 export default function Single({
     error,
@@ -125,7 +107,7 @@ function SingleImageSection({ image, isDisabled, onImageChange }) {
                 ref={imageInputRef}
                 className="hidden-file-input"
                 type="file"
-                accept="image/jpeg,image/png,image/webp"
+                accept="image/*"
                 onChange={handleImageChange}
                 disabled={isDisabled}
                 tabIndex={-1}
@@ -134,118 +116,22 @@ function SingleImageSection({ image, isDisabled, onImageChange }) {
     );
 }
 
-function TileFileName({ fileName }) {
-    const fileNameRef = useRef(null);
-    const [isTruncated, setIsTruncated] = useState(false);
-
-    useEffect(() => {
-        function updateTruncationState() {
-            const element = fileNameRef.current;
-            setIsTruncated(Boolean(element && element.scrollWidth > element.clientWidth));
-        }
-
-        updateTruncationState();
-        window.addEventListener("resize", updateTruncationState);
-
-        return () => {
-            window.removeEventListener("resize", updateTruncationState);
-        };
-    }, [fileName]);
-
-    return (
-        <span
-            className={fileName ? "tile-file-name" : "tile-file-name empty-file-name"}
-            ref={fileNameRef}
-            title={isTruncated ? fileName : undefined}
-        >
-            {fileName}
-        </span>
-    );
-}
-
-function ImagePreview({ image }) {
-    const [previewUrl, setPreviewUrl] = useState("");
-
-    useEffect(() => {
-        const nextPreviewUrl = URL.createObjectURL(image);
-        setPreviewUrl(nextPreviewUrl);
-
-        return () => {
-            URL.revokeObjectURL(nextPreviewUrl);
-        };
-    }, [image]);
-
-    return <img alt="" src={previewUrl} />;
-}
-
-function FieldGrid({ flashMissingInputs = false, formValues, idPrefix, isDisabled, onFieldChange }) {
-    return (
-        <div className="field-grid">
-            {FIELD_DEFINITIONS.map((field) => {
-                const shouldFlashField = flashMissingInputs && !field.optional && !formValues[field.key].trim();
-                const inputClassName = shouldFlashField ? "missing-input-flash" : undefined;
-                const inputId = `${idPrefix}-${field.key}`;
-
-                return (
-                    <div
-                        className={field.multiline ? "field-row field-wide" : "field-row"}
-                        key={field.key}
-                    >
-                        <label htmlFor={inputId}>
-                            {field.label}
-                            {field.hint ? <span className="inline-hint">({field.hint})</span> : null}
-                            {field.optional ? <span className="label-note">Optional if not on label</span> : null}
-                        </label>
-                        {field.multiline ? (
-                            <textarea
-                                className={inputClassName}
-                                id={inputId}
-                                value={formValues[field.key]}
-                                onChange={(event) => onFieldChange(field.key, event.target.value)}
-                                disabled={isDisabled}
-                                rows={5}
-                            />
-                        ) : (
-                            <input
-                                className={inputClassName}
-                                id={inputId}
-                                type="text"
-                                value={formValues[field.key]}
-                                onChange={(event) => onFieldChange(field.key, event.target.value)}
-                                disabled={isDisabled}
-                            />
-                        )}
-                    </div>
-                );
-            })}
-        </div>
-    );
-}
-
-function FormMessages({ error, isLoading, loadingText }) {
-    return (
-        <>
-            {error && (
-                <div className="message message-error" role="alert">
-                    {error}
-                </div>
-            )}
-
-            {isLoading && (
-                <div className="message message-loading" role="status">
-                    {loadingText}
-                </div>
-            )}
-        </>
-    );
-}
-
 function ResultsView({ result }) {
+    const headingRef = useRef(null);
     const isApproved = result.overall_verdict === "APPROVED";
+
+    // Move focus to the outcome so keyboard and screen-reader users are not
+    // left below the fold after the result renders.
+    useEffect(() => {
+        if (headingRef.current) {
+            headingRef.current.focus({ preventScroll: true });
+            headingRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+    }, [result]);
 
     return (
         <section className="results-panel" aria-labelledby="results-title">
-            <h2 id="results-title" className="section-title result-title-line">
+            <h2 id="results-title" className="section-title result-title-line" ref={headingRef} tabIndex={-1}>
                 Label Result:
                 <span className={isApproved ? "single-result-pill single-result-approved" : "single-result-pill single-result-review"}>
                     {isApproved ? "Approved" : "Needs Review"}
@@ -258,55 +144,6 @@ function ResultsView({ result }) {
     );
 }
 
-function ResultFields({ results }) {
-    return (
-        <div className="result-list">
-            {results.map((fieldResult) => (
-                <FieldResultRow fieldResult={fieldResult} key={fieldResult.field} />
-            ))}
-        </div>
-    );
-}
-
-function FieldResultRow({ fieldResult }) {
-    const didPass = fieldResult.status === "PASS";
-
-    return (
-        <article className={didPass ? "result-row result-pass" : "result-row result-fail"}>
-            <div className="result-heading">
-                <h2>{FIELD_LABELS[fieldResult.field] || fieldResult.field}</h2>
-                <span className={didPass ? "status-pill pass-pill" : "status-pill fail-pill"}>
-                    {didPass ? "PASS" : "FAIL"}
-                </span>
-            </div>
-            <dl className="comparison-values">
-                <div>
-                    <dt>Application says</dt>
-                    <dd>{displayValue(fieldResult.expected)}</dd>
-                </div>
-                <div>
-                    <dt>Label shows</dt>
-                    <dd>{displayValue(fieldResult.found)}</dd>
-                </div>
-            </dl>
-        </article>
-    );
-}
-
 function isSingleLabelComplete(image, values) {
     return Boolean(image) && requiredFieldsComplete(values);
-}
-
-function requiredFieldsComplete(values) {
-    return FIELD_DEFINITIONS.every(
-        (field) => field.optional || values[field.key].trim(),
-    );
-}
-
-function displayValue(value) {
-    return value || "Not found on label";
-}
-
-function formatSeconds(latencyMs) {
-    return (latencyMs / 1000).toFixed(1);
 }

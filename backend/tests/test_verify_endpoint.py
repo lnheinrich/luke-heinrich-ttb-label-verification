@@ -486,6 +486,24 @@ async def test_verify_batch_isolates_invalid_item_application_data() -> None:
     assert result.items[1].error == "Application data must include all required fields."
 
 
+# Verifies batches beyond the configured item cap are rejected with a 413.
+@pytest.mark.anyio
+async def test_verify_batch_over_item_cap_returns_413(monkeypatch) -> None:
+    monkeypatch.setattr("app.main.MAX_BATCH_SIZE", 2)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await call_verify_batch(
+            application_items=[make_application_data() for _ in range(3)],
+            images=[
+                make_upload(image_bytes=f"image-{index}".encode(), filename=f"{index}.jpg")
+                for index in range(3)
+            ],
+        )
+
+    assert exc_info.value.status_code == 413
+    assert exc_info.value.detail == "Batch is too large. Maximum is 2 labels per request."
+
+
 # Verifies an image without application data degrades to an item failure.
 @pytest.mark.anyio
 async def test_verify_batch_extra_image_degrades_per_item() -> None:

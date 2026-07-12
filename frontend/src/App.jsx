@@ -1,28 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import Batch from "./components/Batch";
 import Single from "./components/Single";
+import { INITIAL_FORM_VALUES, requiredFieldsComplete } from "./components/fields";
+import useBatchItems, {
+    MAX_BATCH_ITEMS,
+    getIncompleteBatchLabelNumbers,
+    isBatchItemComplete,
+} from "./hooks/useBatchItems";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
-
-const FIELD_DEFINITIONS = [
-    { key: "brand_name", label: "Brand Name" },
-    { key: "class_type", label: "Class / Type" },
-    { key: "abv", label: "Alcohol Content" },
-    { key: "net_contents", label: "Bottle Size", hint: "include units" },
-    { key: "producer", label: "Producer" },
-    { key: "country_of_origin", label: "Country of Origin" },
-    {
-        key: "government_warning",
-        label: "Government Warning",
-        multiline: true,
-        optional: true,
-    },
-];
-
-const INITIAL_FORM_VALUES = FIELD_DEFINITIONS.reduce((values, field) => {
-    values[field.key] = "";
-    return values;
-}, {});
 
 export default function App() {
     const [mode, setMode] = useState("single");
@@ -33,8 +19,6 @@ export default function App() {
     const [isSingleVerifying, setIsSingleVerifying] = useState(false);
     const [shouldFlashSingleMissingInputs, setShouldFlashSingleMissingInputs] = useState(false);
     const singleMissingInputsFlashTimerRef = useRef(null);
-    const [batchItems, setBatchItems] = useState(() => [createBatchItem()]);
-    const [activeBatchItemId, setActiveBatchItemId] = useState(null);
     const [batchResult, setBatchResult] = useState(null);
     const [batchError, setBatchError] = useState("");
     const [isBatchVerifying, setIsBatchVerifying] = useState(false);
@@ -46,12 +30,19 @@ export default function App() {
     const alertOrderRef = useRef(0);
     const [flashingIncompleteItemIds, setFlashingIncompleteItemIds] = useState([]);
     const incompleteLabelFlashTimerRef = useRef(null);
-
-    useEffect(() => {
-        if (activeBatchItemId && !batchItems.some((item) => item.id === activeBatchItemId)) {
-            setActiveBatchItemId(null);
-        }
-    }, [activeBatchItemId, batchItems]);
+    const {
+        activeItemId: activeBatchItemId,
+        addEmptyItem: addEmptyBatchItem,
+        addImages: addBatchImages,
+        items: batchItems,
+        removeItem: removeBatchItem,
+        setActiveItemId: setActiveBatchItemId,
+        updateField: updateBatchField,
+        updateImage: updateBatchImage,
+    } = useBatchItems({
+        onDuplicateImages: showDuplicateImageAlert,
+        onLimitReached: showBatchLimitAlert,
+    });
 
     useEffect(() => {
         if (mode !== "batch") {
@@ -159,109 +150,6 @@ export default function App() {
         }));
     }
 
-    function updateBatchField(itemId, fieldKey, value) {
-        setBatchItems((currentItems) =>
-            currentItems.map((item) =>
-                item.id === itemId
-                    ? { ...item, values: { ...item.values, [fieldKey]: value } }
-                    : item,
-            ),
-        );
-    }
-
-    function updateBatchImage(itemId, image) {
-        if (image) {
-            const duplicateIndex = batchItems.findIndex(
-                (item) => item.id !== itemId && isSameFile(item.image, image),
-            );
-            if (duplicateIndex !== -1) {
-                showDuplicateImageAlert([duplicateIndex + 1]);
-                return;
-            }
-        }
-
-        setBatchItems((currentItems) =>
-            currentItems.map((item) => (item.id === itemId ? { ...item, image } : item)),
-        );
-    }
-
-    function addBatchImages(fileList) {
-        const files = Array.from(fileList || []);
-        if (files.length === 0) {
-            return;
-        }
-
-        const nextItems = [...batchItems];
-        const existingImageLabels = new Map();
-        nextItems.forEach((item, index) => {
-            const signature = getFileSignature(item.image);
-            if (signature) {
-                existingImageLabels.set(signature, index + 1);
-            }
-        });
-        const selectedSignatures = new Set();
-        const duplicateLabels = new Set();
-        const uniqueFiles = files.filter((file) => {
-            const signature = getFileSignature(file);
-            const existingLabel = existingImageLabels.get(signature);
-            if (existingLabel) {
-                duplicateLabels.add(existingLabel);
-                return false;
-            }
-            if (selectedSignatures.has(signature)) {
-                return false;
-            }
-            selectedSignatures.add(signature);
-            return true;
-        });
-        let fileIndex = 0;
-
-        if (duplicateLabels.size > 0) {
-            showDuplicateImageAlert([...duplicateLabels]);
-        }
-
-        if (uniqueFiles.length === 0) {
-            return;
-        }
-
-        if (nextItems.length === 1 && isBatchItemEmpty(nextItems[0])) {
-            nextItems[0] = { ...nextItems[0], image: uniqueFiles[0] };
-            fileIndex = 1;
-        }
-
-        while (fileIndex < uniqueFiles.length) {
-            nextItems.push(createBatchItem(uniqueFiles[fileIndex]));
-            fileIndex += 1;
-        }
-
-        setBatchItems(nextItems);
-    }
-
-    function addEmptyBatchItem() {
-        setBatchItems((currentItems) => [...currentItems, createBatchItem()]);
-    }
-
-    function removeBatchItem(itemId) {
-        const itemIndex = batchItems.findIndex((item) => item.id === itemId);
-        if (itemIndex === -1) {
-            return;
-        }
-
-        if (batchItems.length === 1) {
-            const emptyItem = createBatchItem();
-            setBatchItems([emptyItem]);
-            setActiveBatchItemId(null);
-            return;
-        }
-
-        const nextItems = batchItems.filter((item) => item.id !== itemId);
-
-        setBatchItems(nextItems);
-        if (activeBatchItemId === itemId) {
-            setActiveBatchItemId(null);
-        }
-    }
-
     function showDuplicateImageAlert(labelNumbers) {
         const sortedLabelNumbers = [...labelNumbers].sort((firstNumber, secondNumber) => firstNumber - secondNumber);
         const displayedLabelNumbers = sortedLabelNumbers.slice(0, 5);
@@ -288,6 +176,18 @@ export default function App() {
         setIncompleteLabelsAlert({
             id: crypto.randomUUID(),
             message: formatIncompleteLabelsMessage(labelNumbers),
+            order: getNextAlertOrder(),
+        });
+        incompleteLabelsAlertTimerRef.current = window.setTimeout(() => {
+            setIncompleteLabelsAlert(null);
+        }, 5400);
+    }
+
+    function showBatchLimitAlert() {
+        window.clearTimeout(incompleteLabelsAlertTimerRef.current);
+        setIncompleteLabelsAlert({
+            id: crypto.randomUUID(),
+            message: `Batch is limited to ${MAX_BATCH_ITEMS} labels`,
             order: getNextAlertOrder(),
         });
         incompleteLabelsAlertTimerRef.current = window.setTimeout(() => {
@@ -392,6 +292,7 @@ export default function App() {
                         >
                             <span className="mode-highlight" aria-hidden="true" />
                             <button
+                                aria-pressed={mode === "single"}
                                 className={mode === "single" ? "mode-button active-mode" : "mode-button"}
                                 type="button"
                                 onClick={() => setMode("single")}
@@ -399,6 +300,7 @@ export default function App() {
                                 Single
                             </button>
                             <button
+                                aria-pressed={mode === "batch"}
                                 className={mode === "batch" ? "mode-button active-mode" : "mode-button"}
                                 type="button"
                                 onClick={() => setMode("batch")}
@@ -444,43 +346,6 @@ export default function App() {
     );
 }
 
-function createBatchItem(image = null) {
-    return {
-        id: crypto.randomUUID(),
-        image,
-        values: { ...INITIAL_FORM_VALUES },
-    };
-}
-
-function isBatchItemComplete(item) {
-    return Boolean(item.image) && requiredFieldsComplete(item.values);
-}
-
-function isBatchItemEmpty(item) {
-    return !item.image && FIELD_DEFINITIONS.every((field) => !item.values[field.key].trim());
-}
-
-function getFileSignature(file) {
-    if (!file) {
-        return "";
-    }
-
-    return `${file.name}:${file.size}:${file.lastModified}`;
-}
-
-function isSameFile(firstFile, secondFile) {
-    return Boolean(firstFile && secondFile && getFileSignature(firstFile) === getFileSignature(secondFile));
-}
-
-function getIncompleteBatchLabelNumbers(items) {
-    return items.reduce((labelNumbers, item, index) => {
-        if (!isBatchItemComplete(item)) {
-            labelNumbers.push(index + 1);
-        }
-        return labelNumbers;
-    }, []);
-}
-
 function formatIncompleteLabelsMessage(labelNumbers) {
     const sortedLabelNumbers = [...labelNumbers].sort((firstNumber, secondNumber) => firstNumber - secondNumber);
     const displayedLabelNumbers = sortedLabelNumbers.slice(0, 5);
@@ -506,12 +371,6 @@ function validateLabelInput(image, values) {
     }
 
     return "";
-}
-
-function requiredFieldsComplete(values) {
-    return FIELD_DEFINITIONS.every(
-        (field) => field.optional || values[field.key].trim(),
-    );
 }
 
 async function readResponseJson(response) {
