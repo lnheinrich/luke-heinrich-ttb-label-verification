@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from io import BytesIO
 from typing import Any
 
+from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 from PIL import Image, ImageOps, UnidentifiedImageError
@@ -12,10 +13,14 @@ from pydantic import ValidationError
 from app.models import ExtractedLabel
 
 
-DEFAULT_VISION_MODEL = "gemini-2.5-flash"
-DEFAULT_TIMEOUT_SECONDS = 10.0
-MAX_IMAGE_DIMENSION = 1024
-JPEG_QUALITY = 75
+# Load .env before the module-level config reads below; main.py loads it too,
+# but only after this module has already been imported.
+load_dotenv()
+
+DEFAULT_VISION_MODEL = os.getenv("GOOGLEAI_MODEL", "gemini-2.5-flash")
+DEFAULT_TIMEOUT_SECONDS = float(os.getenv("VISION_TIMEOUT_SECONDS", "10.0"))
+MAX_IMAGE_DIMENSION = int(os.getenv("MAX_IMAGE_DIMENSION", "1024"))
+JPEG_QUALITY = int(os.getenv("JPEG_QUALITY", "75"))
 
 EXTRACTION_PROMPT = """
 You are extracting text from an alcohol beverage label for TTB label review.
@@ -87,7 +92,7 @@ class VisionService:
         timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
     ) -> None:
         self.client = client or build_google_client()
-        self.model = model or os.getenv("GOOGLEAI_MODEL", DEFAULT_VISION_MODEL)
+        self.model = model or DEFAULT_VISION_MODEL
         self.timeout_seconds = timeout_seconds
         self.last_metrics: VisionRequestMetrics | None = None
 

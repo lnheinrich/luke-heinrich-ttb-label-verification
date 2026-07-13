@@ -100,6 +100,25 @@ Set frontend environment variables:
 VITE_API_BASE_URL=http://localhost:8000
 ```
 
+## Environment Variables
+
+Every variable read by the code, across the backend (`backend/.env`), frontend (`frontend/.env`), and deployment platforms:
+
+| Variable | Required | Default | Purpose |
+| --- | --- | --- | --- |
+| `GOOGLEAI_API_KEY` | Yes | none | Google AI API key used for vision extraction |
+| `GOOGLEAI_MODEL` | No | `gemini-2.5-flash` | Gemini model used for label extraction |
+| `CORS_ORIGINS` | No | `http://localhost:5173,http://127.0.0.1:5173` | Comma-separated origins allowed by backend CORS |
+| `VISION_TIMEOUT_SECONDS` | No | `10.0` | Vision model request timeout in seconds |
+| `MAX_IMAGE_DIMENSION` | No | `1024` | Longest image side in pixels after preprocessing downscale |
+| `JPEG_QUALITY` | No | `75` | JPEG quality used when re-encoding preprocessed images |
+| `MAX_IMAGE_BYTES` | No | `10485760` | Maximum accepted upload size per image, in bytes |
+| `BATCH_CONCURRENCY` | No | `3` | Maximum concurrent vision requests while processing a batch |
+| `MAX_BATCH_SIZE` | No | `10` | Maximum labels accepted per `/verify/batch` request |
+| `VITE_API_BASE_URL` | No | `http://localhost:8000` | Backend base URL the frontend calls |
+| `PYTHON_VERSION` | Render only | `3.12.13` | Pins the Python runtime version on Render |
+| `PYTHONUNBUFFERED` | Render only | `1` | Emits backend logs immediately instead of buffering |
+
 ## Run Locally
 
 Start the backend:

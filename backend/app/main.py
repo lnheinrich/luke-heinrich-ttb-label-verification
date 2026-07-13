@@ -28,8 +28,8 @@ load_dotenv()
 
 
 APP_NAME = "ttb-label-verification"
-MAX_IMAGE_BYTES = 10 * 1024 * 1024
-BATCH_CONCURRENCY = 3
+MAX_IMAGE_BYTES = int(os.getenv("MAX_IMAGE_BYTES", str(10 * 1024 * 1024)))
+BATCH_CONCURRENCY = int(os.getenv("BATCH_CONCURRENCY", "3"))
 MAX_BATCH_SIZE = int(os.getenv("MAX_BATCH_SIZE", "10"))
 SUPPORTED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
 logger = logging.getLogger(__name__)
