@@ -1,3 +1,4 @@
+import time
 from io import BytesIO
 from types import SimpleNamespace
 
@@ -101,7 +102,10 @@ def test_extract_label_request_uses_image_prompt_and_structured_output() -> None
     assert config.response_mime_type == "application/json"
     assert config.response_schema is ExtractedLabel
     assert config.temperature == 0
-    assert config.http_options.timeout == 3000
+    # Thinking is disabled by default for latency; the SDK deadline is clamped
+    # to Google's 10s minimum while the 3s timeout is enforced locally.
+    assert config.thinking_config.thinking_budget == 0
+    assert config.http_options.timeout == 10000
     assert service.last_metrics is not None
     assert service.last_metrics.original_bytes > 0
     assert service.last_metrics.optimized_bytes > 0
@@ -219,6 +223,25 @@ def test_client_exception_raises_service_error() -> None:
 
     with pytest.raises(VisionServiceError):
         service.extract_label(make_image_bytes(), "image/png")
+
+
+# Verifies the configured timeout is enforced locally even though the SDK
+# deadline is clamped to Google's 10s minimum.
+def test_slow_client_raises_service_error_at_local_timeout() -> None:
+    class SlowModels:
+        def generate_content(self, **kwargs):
+            time.sleep(0.5)
+            return SimpleNamespace(parsed=ExtractedLabel())
+
+    class SlowClient:
+        models = SlowModels()
+
+    service = VisionService(client=SlowClient(), timeout_seconds=0.05)
+
+    start = time.perf_counter()
+    with pytest.raises(VisionServiceError):
+        service.extract_label(make_image_bytes(), "image/png")
+    assert time.perf_counter() - start < 0.4
 
 
 # Verifies inline image helper always returns a JPEG part.
