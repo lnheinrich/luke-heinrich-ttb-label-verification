@@ -1,38 +1,41 @@
-import time
+import base64
 from io import BytesIO
 from types import SimpleNamespace
 
+import httpx
 import pytest
+from openai import APITimeoutError
 from PIL import Image
 
 from app.models import ExtractedLabel
 from app.vision import (
     EXTRACTION_PROMPT,
     MAX_IMAGE_DIMENSION,
+    VisionProviderError,
     VisionService,
     VisionServiceError,
-    image_bytes_to_inline_part,
+    image_bytes_to_data_url,
     preprocess_image,
 )
 
 
-class FakeModels:
+class FakeResponses:
     def __init__(self, parsed=None, exception: Exception | None = None) -> None:
         self.parsed = parsed
         self.exception = exception
         self.calls = []
 
-    def generate_content(self, **kwargs):
+    def parse(self, **kwargs):
         self.calls.append(kwargs)
         if self.exception:
             raise self.exception
 
-        return SimpleNamespace(parsed=self.parsed)
+        return SimpleNamespace(output_parsed=self.parsed)
 
 
 class FakeClient:
     def __init__(self, parsed=None, exception: Exception | None = None) -> None:
-        self.models = FakeModels(parsed=parsed, exception=exception)
+        self.responses = FakeResponses(parsed=parsed, exception=exception)
 
 
 # Build an in-memory image fixture for preprocessing and request tests.
@@ -80,7 +83,7 @@ def test_corrupt_image_raises_service_error_before_client_call() -> None:
     with pytest.raises(VisionServiceError):
         service.extract_label(b"not an image", "image/jpeg")
 
-    assert fake_client.models.calls == []
+    assert fake_client.responses.calls == []
 
 
 # Verifies the model request contains image input, prompt, model, timeout, and schema config.
@@ -91,21 +94,18 @@ def test_extract_label_request_uses_image_prompt_and_structured_output() -> None
 
     result = service.extract_label(make_image_bytes(), "image/png")
 
-    call = fake_client.models.calls[0]
-    prompt, image_part = call["contents"]
-    config = call["config"]
+    call = fake_client.responses.calls[0]
+    text_part, image_part = call["input"][0]["content"]
 
     assert result.brand_name == "Mountain Creek"
     assert call["model"] == "test-vision-model"
-    assert prompt == EXTRACTION_PROMPT
-    assert image_part.inline_data.mime_type == "image/jpeg"
-    assert config.response_mime_type == "application/json"
-    assert config.response_schema is ExtractedLabel
-    assert config.temperature == 0
-    # Thinking is disabled by default for latency; the SDK deadline is clamped
-    # to Google's 10s minimum while the 3s timeout is enforced locally.
-    assert config.thinking_config.thinking_budget == 0
-    assert config.http_options.timeout == 10000
+    assert call["input"][0]["role"] == "user"
+    assert text_part == {"type": "input_text", "text": EXTRACTION_PROMPT}
+    assert image_part["type"] == "input_image"
+    assert image_part["image_url"].startswith("data:image/jpeg;base64,")
+    assert call["text_format"] is ExtractedLabel
+    assert call["temperature"] == 0
+    assert call["timeout"] == 3
     assert service.last_metrics is not None
     assert service.last_metrics.original_bytes > 0
     assert service.last_metrics.optimized_bytes > 0
@@ -217,36 +217,29 @@ def test_invalid_structured_response_raises_service_error() -> None:
         service.extract_label(make_image_bytes(), "image/png")
 
 
-# Verifies timeout or API client failures are wrapped in a service error.
+# Verifies generic API client failures are wrapped in a service error.
 def test_client_exception_raises_service_error() -> None:
-    service = VisionService(client=FakeClient(exception=TimeoutError("request timed out")))
+    service = VisionService(client=FakeClient(exception=RuntimeError("api failure")))
 
     with pytest.raises(VisionServiceError):
         service.extract_label(make_image_bytes(), "image/png")
 
 
-# Verifies the configured timeout is enforced locally even though the SDK
-# deadline is clamped to Google's 10s minimum.
-def test_slow_client_raises_service_error_at_local_timeout() -> None:
-    class SlowModels:
-        def generate_content(self, **kwargs):
-            time.sleep(0.5)
-            return SimpleNamespace(parsed=ExtractedLabel())
+# Verifies SDK timeouts surface as the provider timeout error message.
+def test_sdk_timeout_raises_provider_timeout_error() -> None:
+    timeout_error = APITimeoutError(
+        request=httpx.Request("POST", "https://api.openai.com/v1/responses")
+    )
+    service = VisionService(client=FakeClient(exception=timeout_error))
 
-    class SlowClient:
-        models = SlowModels()
-
-    service = VisionService(client=SlowClient(), timeout_seconds=0.05)
-
-    start = time.perf_counter()
-    with pytest.raises(VisionServiceError):
+    with pytest.raises(VisionProviderError, match="timed out"):
         service.extract_label(make_image_bytes(), "image/png")
-    assert time.perf_counter() - start < 0.4
 
 
-# Verifies inline image helper always returns a JPEG part.
-def test_image_bytes_to_inline_part_returns_jpeg_part() -> None:
-    part = image_bytes_to_inline_part(make_image_bytes())
+# Verifies the data URL helper always returns an inline JPEG payload.
+def test_image_bytes_to_data_url_returns_jpeg_data_url() -> None:
+    image_url = image_bytes_to_data_url(make_image_bytes())
 
-    assert part.inline_data.mime_type == "image/jpeg"
-    assert part.inline_data.data.startswith(b"\xff\xd8")
+    assert image_url.startswith("data:image/jpeg;base64,")
+    decoded = base64.b64decode(image_url.split(",", 1)[1])
+    assert decoded.startswith(b"\xff\xd8")

@@ -18,7 +18,7 @@ The backend is hosted on Render's free tier, so the first request after inactivi
 - Single-label verification flow.
 - Batch verification flow with summary counts and per-label drill-down.
 - Image preprocessing before model extraction to reduce latency and cost.
-- Structured JSON extraction from Google AI.
+- Structured JSON extraction from OpenAI.
 - Field-by-field comparison with expected-vs-found output.
 - Stateless backend with no database or persisted uploads.
 - Human-readable errors for invalid files, missing inputs, and provider failures.
@@ -31,7 +31,7 @@ React/Vite frontend
 FastAPI backend
   -> validation
   -> image preprocess
-  -> Google AI vision extraction
+  -> OpenAI vision extraction
   -> comparison engine
   -> VerificationResult / BatchResult
 ```
@@ -60,8 +60,8 @@ Any failed field returns `NEEDS_REVIEW`; all fields passing returns `APPROVED`.
 
 ## Tech Stack
 
-- Backend: Python 3.12, FastAPI, Pydantic, Pillow, RapidFuzz, Google Gen AI SDK
-- Vision model: `gemini-2.5-flash`, confirmed present in Google's current Gemini API model list (`client.models.list()`, checked July 13, 2026)
+- Backend: Python 3.12, FastAPI, Pydantic, Pillow, RapidFuzz, OpenAI Python SDK
+- Vision model: `gpt-4.1-mini`, confirmed present in OpenAI's current model list (`client.models.list()`, checked July 13, 2026)
 - Frontend: React, Vite, JavaScript, CSS
 - Deployment: Render backend, Vercel frontend
 - Dependency managers: `uv` for Python, `npm` for frontend
@@ -93,8 +93,8 @@ Set backend environment variables:
 
 ```text
 CORS_ORIGINS=http://localhost:5173
-GOOGLEAI_API_KEY=<your Google AI API key>
-GOOGLEAI_MODEL=gemini-2.5-flash
+OPENAI_API_KEY=<your OpenAI API key>
+OPENAI_MODEL=gpt-4.1-mini
 ```
 
 Set frontend environment variables:
@@ -109,11 +109,10 @@ Every variable read by the code, across the backend (`backend/.env`), frontend (
 
 | Variable | Required | Default | Purpose |
 | --- | --- | --- | --- |
-| `GOOGLEAI_API_KEY` | Yes | none | Google AI API key used for vision extraction |
-| `GOOGLEAI_MODEL` | No | `gemini-2.5-flash` | Gemini model used for label extraction |
+| `OPENAI_API_KEY` | Yes | none | OpenAI API key used for vision extraction |
+| `OPENAI_MODEL` | No | `gpt-4.1-mini` | OpenAI model used for label extraction |
 | `CORS_ORIGINS` | No | `http://localhost:5173,http://127.0.0.1:5173` | Comma-separated origins allowed by backend CORS |
 | `VISION_TIMEOUT_SECONDS` | No | `4.5` | Vision model request timeout in seconds |
-| `VISION_THINKING_BUDGET` | No | `0` | Gemini thinking budget in tokens; `0` disables thinking for lowest latency, `-1` restores dynamic thinking |
 | `MAX_IMAGE_DIMENSION` | No | `1024` | Longest image side in pixels after preprocessing downscale |
 | `JPEG_QUALITY` | No | `75` | JPEG quality used when re-encoding preprocessed images |
 | `MAX_IMAGE_BYTES` | No | `10485760` | Maximum accepted upload size per image, in bytes |
@@ -288,8 +287,8 @@ Required Render environment variables:
 PYTHON_VERSION=3.12.13
 PYTHONUNBUFFERED=1
 CORS_ORIGINS=https://ttb-label-verification-frontend.vercel.app
-GOOGLEAI_API_KEY=<set in Render dashboard>
-GOOGLEAI_MODEL=gemini-2.5-flash
+OPENAI_API_KEY=<set in Render dashboard>
+OPENAI_MODEL=gpt-4.1-mini
 ```
 
 ### Vercel Frontend
@@ -327,10 +326,10 @@ Measured single-label `POST /verify` latency (July 13, 2026, current configurati
 
 | Percentile | Client-observed total | Server-reported `latency_ms` |
 | --- | --- | --- |
-| p50 | 2289 ms | 2268 ms |
-| p95 | 4021 ms | 4001 ms |
+| p50 | 3327 ms | 3325 ms |
+| p95 | 4272 ms | 4270 ms |
 
-How the measurement was taken: `backend/scripts/measure_latency.py` posted a real whiskey label image (PNG) to `/verify` sequentially — 15 timed runs after 1 untimed warmup request, 0 failures — and reports nearest-rank p50/p95 of the client-observed request time. The server-reported `latency_ms` (which excludes network transfer) is recorded alongside it; the vision model call dominates it, with preprocessing and comparison contributing only a few milliseconds. The backend ran the deployed configuration (`gemini-2.5-flash`, thinking disabled, 1024 px / quality-75 preprocessing). Reproduce with:
+How the measurement was taken: `backend/scripts/measure_latency.py` posted a synthetic sample label JPEG to `/verify` sequentially — 15 timed runs after 1 untimed warmup request, 0 failures — and reports nearest-rank p50/p95 of the client-observed request time. The server-reported `latency_ms` (which excludes network transfer) is recorded alongside it; the vision model call dominates it, with preprocessing and comparison contributing only a few milliseconds. The backend ran locally with the deployed configuration (`gpt-4.1-mini`, 1024 px / quality-75 preprocessing, 4.5 s timeout). Reproduce with:
 
 ```bash
 cd backend
@@ -339,8 +338,8 @@ uv run python scripts/measure_latency.py path/to/label1.jpg path/to/label2.jpg
 
 Latency notes:
 
-- Gemini 2.5 Flash "thinks" by default, and that thinking dominated request time: the same measurement against the pre-fix deployed backend (July 12, 2026) showed p50 5847 ms / p95 6665 ms client-observed. Disabling thinking (`VISION_THINKING_BUDGET=0`) cut median vision latency from 4.6 s to 2.1 s in A/B runs with identical extraction output on the same label.
-- The vision model request timeout is 4.5 seconds (`VISION_TIMEOUT_SECONDS`) in the deployed configuration. Google's API rejects request deadlines under 10 seconds, so the backend sends Google a 10-second deadline and enforces the 4.5-second limit locally.
+- Output length dominates vision latency. The extraction prompt instructs the model not to transcribe the full label into `raw_text` (nothing consumes it); with transcription on, the same measurement showed roughly double the median extraction time on the same label with otherwise identical field output.
+- The vision model request timeout is 4.5 seconds (`VISION_TIMEOUT_SECONDS`), passed directly to the OpenAI SDK as the per-request timeout. The client is built with automatic retries disabled so the timeout is a real per-request budget rather than a floor.
 - The Render free tier cold-starts after inactivity, which adds up to ~30 seconds to the first request only; warmup requests absorb this and are excluded from the numbers above.
 
 ## Approach And Tools
@@ -348,7 +347,7 @@ Latency notes:
 The project was built AI-first with a Plan/Review/Execute loop, with a human reviewing and committing every change:
 
 - The initial application (FastAPI backend, comparison engine, React frontend, deployment setup) was built with OpenAI Codex: each piece of work started as a written plan, the generated changes were reviewed before execution, and only reviewed diffs were committed.
-- The follow-up hardening passes (correctness fixes, UX/quality, frontend tests + CI, and this deployment/documentation pass) were implemented with Claude Code working from direct instructions: the agent implemented and verified each requested change (running pytest, Vitest, builds, and live API checks), and every diff was reviewed, exercised in the running app, and staged/committed by hand.
+- The follow-up hardening passes (correctness fixes, UX/quality, frontend tests + CI, deployment/documentation, and a vision provider swap from Gemini to OpenAI) were implemented with OpenAI Codex working from direct instructions: the agent implemented and verified each requested change (running pytest, Vitest, builds, and live API checks), and every diff was reviewed, exercised in the running app, and staged/committed by hand.
 - AI-generated vs hand-written: the bulk of the application code, the test suites, the CI workflow, and this README were AI-generated under human review. Branch and PR management, all git operations, deployment configuration in the Render and Vercel dashboards, latency measurement runs against the deployed URL, and final acceptance testing in the browser were done by hand.
 - Decisions where the model was overridden: the AI's first pass at the batch cap allowed 20 labels and only enforced it server-side — it was lowered to 10 with client-side blocking of additional cards, because 20 large uploads risked oversized requests. The AI's disabled-button styling showed a busy cursor on cap-disabled buttons — it was changed to a not-allowed cursor so "blocked" and "busy" read differently. The AI was also barred from running git staging/commit/push commands; all version control was kept human-only.
 
@@ -363,14 +362,14 @@ The project was built AI-first with a Plan/Review/Execute loop, with a human rev
 
 - The app is stateless; it does not save uploads, results, or user sessions, so there is no history or audit trail.
 - Vision extraction can vary with image quality, glare, angle, blur, and provider availability.
-- Google AI provider latency or rate limiting can cause occasional slow or failed extraction requests.
+- OpenAI provider latency or rate limiting can cause occasional slow or failed extraction requests.
 - Render free tier may cold start after inactivity, delaying the first request by up to ~30 seconds.
 - The proof-of-concept is intended for review workflow support, not automatic legal approval.
 
 ## Tradeoffs
 
 - Government warning matching is intentionally strict and case-sensitive; OCR mistakes produce `NEEDS_REVIEW` so a human inspects the extracted text, at the cost of more false alarms.
-- Gemini thinking is disabled (`VISION_THINKING_BUDGET=0`) for a roughly 2x latency win; extraction quality was identical in A/B testing on label images, but the option to re-enable thinking is kept env-configurable.
+- Full-label `raw_text` transcription is disabled in the extraction prompt for a roughly 2x latency win; the seven compared fields and the verbatim government warning were identical in A/B testing, and the `raw_text` schema field is kept (returned as null) so transcription can be re-enabled by prompt change alone.
 - Images are downscaled to 1024 px and re-encoded at JPEG quality 75 before extraction to cut latency and cost, trading away fine detail that could matter for very small print.
 - Fuzzy/contains matching on brand, class, and producer tolerates OCR noise and partial label phrases, at the cost of occasionally passing a near-miss; a minimum-length guard limits false positives on short names.
 - Statelessness keeps the deployment simple and avoids storing user data, at the cost of persistence features like saved batches or result history.
