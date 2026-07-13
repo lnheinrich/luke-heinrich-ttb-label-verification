@@ -1,4 +1,4 @@
-from app.comparison import verify_label
+from app.comparison import parse_abv, verify_label
 from app.models import ApplicationData, ExtractedLabel
 
 
@@ -215,6 +215,11 @@ def test_abv_percent_vs_alc_vol_and_proof_passes() -> None:
     )
 
     assert result_for_field(result, "abv").status == "PASS"
+
+
+# Verifies the parser resolves a standalone proof value to exactly half.
+def test_abv_parse_standalone_proof_resolves_to_half() -> None:
+    assert parse_abv("90 Proof") == 45.0
 
 
 # Verifies a standalone proof value converts to half its number as ABV.
