@@ -23,7 +23,7 @@ def main() -> None:
         "--timeout-seconds",
         type=float,
         default=4.0,
-        help="Google AI request timeout in seconds.",
+        help="Vision model request timeout in seconds.",
     )
     args = parser.parse_args()
 
