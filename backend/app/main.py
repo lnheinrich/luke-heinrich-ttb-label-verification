@@ -4,6 +4,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
@@ -21,7 +22,12 @@ from app.models import (
     BatchSummary,
     VerificationResult,
 )
-from app.vision import VisionInputError, VisionProviderError, VisionService
+from app.vision import (
+    VisionInputError,
+    VisionProviderError,
+    VisionService,
+    build_google_client,
+)
 
 
 load_dotenv()
@@ -86,8 +92,16 @@ async def validation_exception_handler(
     return JSONResponse(status_code=422, content={"detail": exc.errors()})
 
 
+# The Google client (auth + connection pool) is built once and shared across
+# requests. The VisionService wrapper stays per-request because its
+# last_metrics would otherwise race across concurrent batch extractions.
+@lru_cache(maxsize=1)
+def get_google_client():
+    return build_google_client()
+
+
 def get_vision_service() -> VisionService:
-    return VisionService()
+    return VisionService(client=get_google_client())
 
 
 # Lightweight deploy and uptime check endpoint.

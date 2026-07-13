@@ -9,6 +9,8 @@ The app accepts a label image plus seven application fields, extracts label text
 - Frontend: https://ttb-label-verification-frontend.vercel.app
 - Backend health check: https://ttb-label-verification-backend.onrender.com/health
 
+Date of last verification: July 13, 2026 (frontend loads, backend health returns `ok`, and `backend/scripts/live_smoke.py` returns a 200 verdict end-to-end).
+
 The backend is hosted on Render's free tier, so the first request after inactivity may have a cold-start delay.
 
 ## Features
@@ -59,6 +61,7 @@ Any failed field returns `NEEDS_REVIEW`; all fields passing returns `APPROVED`.
 ## Tech Stack
 
 - Backend: Python 3.12, FastAPI, Pydantic, Pillow, RapidFuzz, Google Gen AI SDK
+- Vision model: `gemini-2.5-flash`, confirmed present in Google's current Gemini API model list (`client.models.list()`, checked July 13, 2026)
 - Frontend: React, Vite, JavaScript, CSS
 - Deployment: Render backend, Vercel frontend
 - Dependency managers: `uv` for Python, `npm` for frontend
@@ -340,11 +343,34 @@ Latency notes:
 - The vision model request timeout is 4.5 seconds (`VISION_TIMEOUT_SECONDS`) in the deployed configuration. Google's API rejects request deadlines under 10 seconds, so the backend sends Google a 10-second deadline and enforces the 4.5-second limit locally.
 - The Render free tier cold-starts after inactivity, which adds up to ~30 seconds to the first request only; warmup requests absorb this and are excluded from the numbers above.
 
-## Assumptions And Limitations
+## Approach And Tools
 
-- The app is stateless; it does not save uploads, results, or user sessions.
+The project was built AI-first with a Plan/Review/Execute loop, with a human reviewing and committing every change:
+
+- The initial application (FastAPI backend, comparison engine, React frontend, deployment setup) was built with OpenAI Codex: each piece of work started as a written plan, the generated changes were reviewed before execution, and only reviewed diffs were committed.
+- The follow-up issue work (correctness fixes, UX/quality, frontend tests + CI, and this deployment/documentation pass) was implemented with Claude Code, driven a few issue steps at a time: the issue text was pasted in as context, the agent implemented and verified each batch of steps (running pytest, Vitest, builds, and live API checks), and every diff was reviewed, exercised in the running app, and staged/committed by hand.
+- AI-generated vs hand-written: the bulk of the application code, the test suites, the CI workflow, and this README were AI-generated under human review. Branch and PR management, all git operations, deployment configuration in the Render and Vercel dashboards, latency measurement runs against the deployed URL, and final acceptance testing in the browser were done by hand.
+- Decisions where the model was overridden: the AI's first pass at the batch cap allowed 20 labels and only enforced it server-side — it was lowered to 10 with client-side blocking of additional cards, because 20 large uploads risked oversized requests. The AI's disabled-button styling showed a busy cursor on cap-disabled buttons — it was changed to a not-allowed cursor so "blocked" and "busy" read differently. The AI was also barred from running git staging/commit/push commands; all version control was kept human-only.
+
+## Assumptions
+
+- The application data entered in the form is the authoritative reference; the label image is what gets checked against it.
+- Each uploaded image shows a single label that is reasonably legible (not heavily blurred, angled, or glare-obscured).
+- The standard TTB government warning (27 CFR 16.21) is legally mandatory, so a label without a readable warning should never pass.
+- Verdicts support a human review workflow; `NEEDS_REVIEW` means "a person should look", not "rejected".
+
+## Limitations
+
+- The app is stateless; it does not save uploads, results, or user sessions, so there is no history or audit trail.
 - Vision extraction can vary with image quality, glare, angle, blur, and provider availability.
 - Google AI provider latency or rate limiting can cause occasional slow or failed extraction requests.
-- Render free tier may cold start after inactivity.
-- Government warning matching is intentionally strict and case-sensitive; OCR mistakes should result in `NEEDS_REVIEW` so a human can inspect the extracted text.
+- Render free tier may cold start after inactivity, delaying the first request by up to ~30 seconds.
 - The proof-of-concept is intended for review workflow support, not automatic legal approval.
+
+## Tradeoffs
+
+- Government warning matching is intentionally strict and case-sensitive; OCR mistakes produce `NEEDS_REVIEW` so a human inspects the extracted text, at the cost of more false alarms.
+- Gemini thinking is disabled (`VISION_THINKING_BUDGET=0`) for a roughly 2x latency win; extraction quality was identical in A/B testing on label images, but the option to re-enable thinking is kept env-configurable.
+- Images are downscaled to 1024 px and re-encoded at JPEG quality 75 before extraction to cut latency and cost, trading away fine detail that could matter for very small print.
+- Fuzzy/contains matching on brand, class, and producer tolerates OCR noise and partial label phrases, at the cost of occasionally passing a near-miss; a minimum-length guard limits false positives on short names.
+- Statelessness keeps the deployment simple and avoids storing user data, at the cost of persistence features like saved batches or result history.
