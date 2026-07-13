@@ -158,8 +158,15 @@ export default function useBatchItems({ onDuplicateImages, onLimitReached }) {
     };
 }
 
+// Untouched means no image and every field still holding its initial value;
+// blank comparison would miss the prefilled government warning.
 function isBatchItemEmpty(item) {
-    return !item.image && FIELD_DEFINITIONS.every((field) => !item.values[field.key].trim());
+    return (
+        !item.image &&
+        FIELD_DEFINITIONS.every(
+            (field) => item.values[field.key] === INITIAL_FORM_VALUES[field.key],
+        )
+    );
 }
 
 function getFileSignature(file) {

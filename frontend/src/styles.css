@@ -833,8 +833,9 @@ textarea:disabled {
     gap: 8px;
 }
 
-/* The heading only receives focus programmatically, never by tabbing. */
-.result-title-line:focus {
+/* These headings only receive focus programmatically, never by tabbing. */
+.result-title-line:focus,
+#batch-results-title:focus {
     outline: none;
 }
 

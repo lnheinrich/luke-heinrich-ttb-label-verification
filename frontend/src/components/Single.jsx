@@ -116,6 +116,10 @@ function SingleImageSection({ image, isDisabled, onImageChange }) {
     );
 }
 
+// Results that already received the post-verification focus scroll, so
+// remounting the view (switching modes and back) does not re-scroll to them.
+const focusedResults = new WeakSet();
+
 function ResultsView({ result }) {
     const headingRef = useRef(null);
     const isApproved = result.overall_verdict === "APPROVED";
@@ -123,10 +127,13 @@ function ResultsView({ result }) {
     // Move focus to the outcome so keyboard and screen-reader users are not
     // left below the fold after the result renders.
     useEffect(() => {
-        if (headingRef.current) {
-            headingRef.current.focus({ preventScroll: true });
-            headingRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+        if (!headingRef.current || focusedResults.has(result)) {
+            return;
         }
+
+        focusedResults.add(result);
+        headingRef.current.focus({ preventScroll: true });
+        headingRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
     }, [result]);
 
     return (

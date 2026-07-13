@@ -1,10 +1,27 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ResultFields, formatSeconds } from "./shared";
 import { scrollTileToViewportOffset } from "../utils/scroll";
+
+// Results that already received the post-verification focus scroll, so
+// remounting the view (switching modes and back) does not re-scroll to them.
+const focusedResults = new WeakSet();
 
 export default function BatchResults({ result }) {
     const [openItemIndex, setOpenItemIndex] = useState(null);
     const resultItemRefs = useRef({});
+    const headingRef = useRef(null);
+
+    // Move focus to the results heading once per new batch result so the
+    // outcome is visible without hunting below the fold.
+    useEffect(() => {
+        if (!headingRef.current || focusedResults.has(result)) {
+            return;
+        }
+
+        focusedResults.add(result);
+        headingRef.current.focus({ preventScroll: true });
+        headingRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, [result]);
 
     function toggleResultItem(itemIndex) {
         setOpenItemIndex((currentIndex) => {
@@ -33,7 +50,7 @@ export default function BatchResults({ result }) {
 
     return (
         <section className="results-panel" aria-labelledby="batch-results-title">
-            <h2 id="batch-results-title" className="section-title">Batch Results</h2>
+            <h2 id="batch-results-title" className="section-title" ref={headingRef} tabIndex={-1}>Batch Results</h2>
             <div className="summary-grid">
                 <SummaryCard label="Passed" value={result.summary.passed} tone="passed" />
                 <SummaryCard label="Needs Review" value={result.summary.needs_review} tone="review" />
