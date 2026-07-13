@@ -109,7 +109,8 @@ Every variable read by the code, across the backend (`backend/.env`), frontend (
 | `GOOGLEAI_API_KEY` | Yes | none | Google AI API key used for vision extraction |
 | `GOOGLEAI_MODEL` | No | `gemini-2.5-flash` | Gemini model used for label extraction |
 | `CORS_ORIGINS` | No | `http://localhost:5173,http://127.0.0.1:5173` | Comma-separated origins allowed by backend CORS |
-| `VISION_TIMEOUT_SECONDS` | No | `10.0` | Vision model request timeout in seconds |
+| `VISION_TIMEOUT_SECONDS` | No | `4.5` | Vision model request timeout in seconds |
+| `VISION_THINKING_BUDGET` | No | `0` | Gemini thinking budget in tokens; `0` disables thinking for lowest latency, `-1` restores dynamic thinking |
 | `MAX_IMAGE_DIMENSION` | No | `1024` | Longest image side in pixels after preprocessing downscale |
 | `JPEG_QUALITY` | No | `75` | JPEG quality used when re-encoding preprocessed images |
 | `MAX_IMAGE_BYTES` | No | `10485760` | Maximum accepted upload size per image, in bytes |
@@ -139,6 +140,106 @@ Local URLs:
 
 - Backend health: http://localhost:8000/health
 - Frontend: http://localhost:5173
+
+## API Examples
+
+The examples below hit the deployed backend; swap the base URL for `http://localhost:8000` to hit a local run.
+
+### POST /verify
+
+```bash
+curl -X POST https://ttb-label-verification-backend.onrender.com/verify \
+  -F "image=@label.jpg" \
+  -F 'application_data={
+    "brand_name": "Old Tom Distillery",
+    "class_type": "Straight Bourbon Whiskey",
+    "abv": "45%",
+    "net_contents": "750 mL",
+    "producer": "Old Tom Spirits Co.",
+    "country_of_origin": "United States",
+    "government_warning": "GOVERNMENT WARNING: (1) ACCORDING TO THE SURGEON GENERAL, WOMEN SHOULD NOT DRINK ALCOHOLIC BEVERAGES DURING PREGNANCY BECAUSE OF THE RISK OF BIRTH DEFECTS. (2) CONSUMPTION OF ALCOHOLIC BEVERAGES IMPAIRS YOUR ABILITY TO DRIVE A CAR OR OPERATE MACHINERY, AND MAY CAUSE HEALTH PROBLEMS."
+  }'
+```
+
+Success response (`200`), one entry per field:
+
+```json
+{
+  "results": [
+    {
+      "field": "brand_name",
+      "match_type": "fuzzy_contains",
+      "expected": "Old Tom Distillery",
+      "found": "OLD TOM DISTILLERY",
+      "status": "PASS"
+    },
+    {
+      "field": "abv",
+      "match_type": "numeric_tolerance",
+      "expected": "45%",
+      "found": "45% ALC./VOL. (90 PROOF)",
+      "status": "PASS"
+    }
+  ],
+  "overall_verdict": "APPROVED",
+  "latency_ms": 2431
+}
+```
+
+`overall_verdict` is `APPROVED` when every field passes, otherwise `NEEDS_REVIEW`. Error responses use a single `detail` string:
+
+```json
+{"detail": "Request must include image and application_data."}
+{"detail": "Unsupported image type. Use JPEG, PNG, or WebP."}
+```
+
+### POST /verify/batch
+
+Repeat `images` once per file; `application_data` is a JSON array in the same order:
+
+```bash
+curl -X POST https://ttb-label-verification-backend.onrender.com/verify/batch \
+  -F "images=@bourbon.jpg" \
+  -F "images=@gin.jpg" \
+  -F 'application_data=[
+    {"brand_name": "Old Tom Distillery", "class_type": "Straight Bourbon Whiskey", "abv": "45%", "net_contents": "750 mL", "producer": "Old Tom Spirits Co.", "country_of_origin": "United States", "government_warning": "GOVERNMENT WARNING: (1) ACCORDING TO THE SURGEON GENERAL, WOMEN SHOULD NOT DRINK ALCOHOLIC BEVERAGES DURING PREGNANCY BECAUSE OF THE RISK OF BIRTH DEFECTS. (2) CONSUMPTION OF ALCOHOLIC BEVERAGES IMPAIRS YOUR ABILITY TO DRIVE A CAR OR OPERATE MACHINERY, AND MAY CAUSE HEALTH PROBLEMS."},
+    {"brand_name": "Juniper Ridge", "class_type": "Dry Gin", "abv": "40%", "net_contents": "700 mL", "producer": "Juniper Ridge Distillers", "country_of_origin": "England", "government_warning": "GOVERNMENT WARNING: (1) ACCORDING TO THE SURGEON GENERAL, WOMEN SHOULD NOT DRINK ALCOHOLIC BEVERAGES DURING PREGNANCY BECAUSE OF THE RISK OF BIRTH DEFECTS. (2) CONSUMPTION OF ALCOHOLIC BEVERAGES IMPAIRS YOUR ABILITY TO DRIVE A CAR OR OPERATE MACHINERY, AND MAY CAUSE HEALTH PROBLEMS."}
+  ]'
+```
+
+Success response (`200`); items that fail individually (for example an unsupported file type) come back as `FAILED` entries with an `error` message instead of failing the whole batch:
+
+```json
+{
+  "items": [
+    {
+      "index": 0,
+      "filename": "bourbon.jpg",
+      "status": "COMPLETED",
+      "verification": {
+        "results": ["... same shape as the single /verify response ..."],
+        "overall_verdict": "APPROVED",
+        "latency_ms": 2431
+      },
+      "error": null
+    },
+    {
+      "index": 1,
+      "filename": "gin.jpg",
+      "status": "FAILED",
+      "verification": null,
+      "error": "Unsupported image type. Use JPEG, PNG, or WebP."
+    }
+  ],
+  "summary": {"passed": 1, "needs_review": 1, "total": 2}
+}
+```
+
+Whole-batch errors still use `detail`, for example when the batch exceeds `MAX_BATCH_SIZE`:
+
+```json
+{"detail": "Batch is too large. Maximum is 10 labels per request."}
+```
 
 ## Tests And Build
 
@@ -206,6 +307,38 @@ Required Vercel environment variable:
 VITE_API_BASE_URL=https://ttb-label-verification-backend.onrender.com
 ```
 
+## Live Smoke Check
+
+Exercise the deployed backend end-to-end (image upload, vision extraction, comparison, JSON response):
+
+```bash
+cd backend
+uv run python scripts/live_smoke.py
+```
+
+The script generates a synthetic sample label, posts it with matching application data to `POST /verify` on the deployed URL, and exits non-zero unless the response is 2xx. It prints the overall verdict and server latency on success. No local image is required; use `--image path/to/label.jpg` to smoke-test with a real label, or `--url http://localhost:8000` to point it at a local backend. The default timeout is generous (90s) because the first request after Render free-tier inactivity is a cold start.
+
+## Performance
+
+Measured single-label `POST /verify` latency (July 13, 2026, current configuration):
+
+| Percentile | Client-observed total | Server-reported `latency_ms` |
+| --- | --- | --- |
+| p50 | 2289 ms | 2268 ms |
+| p95 | 4021 ms | 4001 ms |
+
+How the measurement was taken: `backend/scripts/measure_latency.py` posted a real whiskey label image (PNG) to `/verify` sequentially — 15 timed runs after 1 untimed warmup request, 0 failures — and reports nearest-rank p50/p95 of the client-observed request time. The server-reported `latency_ms` (which excludes network transfer) is recorded alongside it; the vision model call dominates it, with preprocessing and comparison contributing only a few milliseconds. The backend ran the deployed configuration (`gemini-2.5-flash`, thinking disabled, 1024 px / quality-75 preprocessing). Reproduce with:
+
+```bash
+cd backend
+uv run python scripts/measure_latency.py path/to/label1.jpg path/to/label2.jpg
+```
+
+Latency notes:
+
+- Gemini 2.5 Flash "thinks" by default, and that thinking dominated request time: the same measurement against the pre-fix deployed backend (July 12, 2026) showed p50 5847 ms / p95 6665 ms client-observed. Disabling thinking (`VISION_THINKING_BUDGET=0`) cut median vision latency from 4.6 s to 2.1 s in A/B runs with identical extraction output on the same label.
+- The vision model request timeout is 4.5 seconds (`VISION_TIMEOUT_SECONDS`) in the deployed configuration. Google's API rejects request deadlines under 10 seconds, so the backend sends Google a 10-second deadline and enforces the 4.5-second limit locally.
+- The Render free tier cold-starts after inactivity, which adds up to ~30 seconds to the first request only; warmup requests absorb this and are excluded from the numbers above.
 
 ## Assumptions And Limitations
 

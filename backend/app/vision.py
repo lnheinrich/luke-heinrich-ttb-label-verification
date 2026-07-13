@@ -1,5 +1,7 @@
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
 from io import BytesIO
 from typing import Any
@@ -18,9 +20,15 @@ from app.models import ExtractedLabel
 load_dotenv()
 
 DEFAULT_VISION_MODEL = os.getenv("GOOGLEAI_MODEL", "gemini-2.5-flash")
-DEFAULT_TIMEOUT_SECONDS = float(os.getenv("VISION_TIMEOUT_SECONDS", "10.0"))
+DEFAULT_TIMEOUT_SECONDS = float(os.getenv("VISION_TIMEOUT_SECONDS", "4.5"))
 MAX_IMAGE_DIMENSION = int(os.getenv("MAX_IMAGE_DIMENSION", "1024"))
 JPEG_QUALITY = int(os.getenv("JPEG_QUALITY", "75"))
+# Gemini 2.5 Flash "thinks" by default, which dominates request latency.
+# Label extraction is OCR-like and does not need reasoning, so thinking is
+# disabled by default; set -1 to restore the model's dynamic thinking.
+VISION_THINKING_BUDGET = int(os.getenv("VISION_THINKING_BUDGET", "0"))
+# Google's API rejects request deadlines shorter than this.
+GOOGLE_MIN_DEADLINE_SECONDS = 10.0
 
 EXTRACTION_PROMPT = """
 You are extracting text from an alcohol beverage label for TTB label review.
@@ -107,19 +115,27 @@ class VisionService:
             raise VisionInputError("Image preprocessing failed") from exc
 
         vision_start = time.perf_counter()
+        # Google rejects request deadlines under 10s, so timeouts below that
+        # are enforced locally by waiting on the SDK call in a worker thread.
+        executor = ThreadPoolExecutor(max_workers=1)
         try:
-            response = self.client.models.generate_content(
+            future = executor.submit(
+                self.client.models.generate_content,
                 model=self.model,
                 contents=[EXTRACTION_PROMPT, image_part],
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json",
                     response_schema=ExtractedLabel,
                     temperature=0,
+                    thinking_config=types.ThinkingConfig(
+                        thinking_budget=VISION_THINKING_BUDGET,
+                    ),
                     http_options=types.HttpOptions(
-                        timeout=int(self.timeout_seconds * 1000),
+                        timeout=int(max(self.timeout_seconds, GOOGLE_MIN_DEADLINE_SECONDS) * 1000),
                     ),
                 ),
             )
+            response = future.result(timeout=self.timeout_seconds)
             label = extract_parsed_label(response)
             self.last_metrics = VisionRequestMetrics(
                 original_bytes=preprocess_result.original_bytes,
@@ -132,10 +148,14 @@ class VisionService:
             return label
         except VisionServiceError:
             raise
+        except FutureTimeoutError as exc:
+            raise VisionProviderError("Vision model request timed out") from exc
         except (ValidationError, ValueError, TypeError) as exc:
             raise VisionProviderError("Vision response did not match ExtractedLabel") from exc
         except Exception as exc:
             raise VisionProviderError("Vision model request failed") from exc
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
 
 
 # Build the Google client from the project-specific API key variable.
